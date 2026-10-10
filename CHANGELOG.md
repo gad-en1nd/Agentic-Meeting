@@ -8,6 +8,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Chinese and English interface languages, with automatic browser selection and a saved manual
+  choice on the login and meeting pages. Controls, service notices and task/report system reasons
+  update when switching languages; names, captions, model content and exports retain their original
+  text. Existing databases gain only nullable report reason metadata, without rewriting old reports.
+
 - The web page states the supported browsers (Chrome and Edge 111, Firefox 114, Safari 16.4) and
   explains why a browser cannot hold a meeting: too old to run the page, not opened over HTTPS, or
   missing WebRTC, microphone capture or Web Audio. Starting and resuming are blocked in such a

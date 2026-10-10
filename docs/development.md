@@ -119,6 +119,23 @@ UV_PROJECT_ENVIRONMENT=.venv-3.14 uv run --python 3.14 --extra agent pytest
   and [configuration.md](configuration.md), with a test.
 - New dependencies are added with `uv add` and justified in the commit message.
 
+## Interface translations
+
+`client/src/catalog.ts` is the single source for Chinese/English strings and named string/number
+interpolation declarations. Add local controls under `ui.*`; system/network keys and parameter
+bounds must first be added to both interface documents (§5.9) and the server message registry.
+Use `useI18n().t` at render time and keep structured message references in state so that switching
+language also updates existing errors/notices. Do not translate user/model content or persist a locale
+in meeting data. The provider surrounds the login gate. The pre-module fallback in `index.html`
+receives its limited dictionary from the same catalogs during Vite's HTML transform and keeps ES5 syntax.
+
+`npm run build --prefix client` first runs `client/scripts/check-catalog.mjs`. It rejects missing
+locale keys, placeholder/type mismatches and differences from the bilingual network contract.
+This is a repository rule: a running browser cannot reveal missing keys in unvisited branches.
+Locale behavior belongs in `client/e2e/`, and server producers/migrations in `tests/e2e/`; do not
+add helper unit tests. Session, task, interruption and timeline formats retain their separate
+precision; localization changes only presentation, never Clock values or exported content.
+
 ## Testing
 
 The test suite is end-to-end. It runs without a GPU, model weights or network access.

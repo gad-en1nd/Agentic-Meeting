@@ -104,6 +104,19 @@ UV_PROJECT_ENVIRONMENT=.venv-3.14 uv run --python 3.14 --extra agent pytest
   [configuration.md](configuration.md)，并补充测试。
 - 新依赖用 `uv add` 添加，并在提交说明中说明用途。
 
+## 界面翻译
+
+`client/src/catalog.ts` 是中英文文案及具名 string/number 插值声明的唯一来源。
+本地控件使用 `ui.*`；系统／网络键及参数边界先更新双语接口文档（§5.9）和服务端消息注册表。
+用 `useI18n().t` 在渲染时翻译，状态中保留结构化消息引用，让已显示的错误和提示也随语言切换。
+不翻译用户／模型内容，不把界面语言存入会议数据。Provider 放在登录门闩外。
+`index.html` 的模块启动前兜底字典由 Vite HTML transform 从同一 catalogs 注入，脚本保留 ES5 语法。
+
+`npm run build --prefix client` 先运行 `client/scripts/check-catalog.mjs`，拒绝语言缺键、
+插值／类型不一致及与双语网络契约的差异。这是仓库规则：运行中的浏览器无法发现未走到分支缺失的键。
+语言行为在 `client/e2e/` 验证，服务端生产点／迁移在 `tests/e2e/` 验证，不新增 helper 单元测试。
+会话、任务、中断和时间轴保持各自的原有精度；本地化只改变显示，不改变 Clock 数值或导出内容。
+
 ## 测试
 
 测试是端到端的，不需要 GPU、模型权重或网络。

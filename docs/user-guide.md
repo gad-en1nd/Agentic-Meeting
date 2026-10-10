@@ -2,9 +2,10 @@
 
 **English** · [简体中文](zh-CN/user-guide.md)
 
-How to use the web page during and after a meeting. The interface is in Chinese; button labels are
-quoted as they appear, with an English gloss.
+How to use the web page during and after a meeting. The page supports Chinese and English.
+Examples below quote Chinese button labels with an English gloss.
 
+- [Interface language](#interface-language)
 - [Supported browsers](#supported-browsers)
 - [Meetings](#meetings)
 - [Captions and speakers](#captions-and-speakers)
@@ -12,6 +13,21 @@ quoted as they appear, with an English gloss.
 - [Screen sharing](#screen-sharing)
 - [Background tasks](#background-tasks)
 - [Report and export](#report-and-export)
+
+## Interface language
+
+The language selector is available on the login screen and the meeting page. Choose Chinese,
+English or automatic. Automatic uses the first supported browser language (Chinese variants or
+English variants), and defaults to Chinese if none is supported. A manual choice is saved in this
+browser; automatic clears it. If browser storage is unavailable, switching still works for the
+current page. Automatic follows browser language changes.
+
+Switching updates controls, login errors, service notices and task/report system reasons already
+on screen. Dates and numbers use the selected language and the browser's local time zone. Meeting
+durations keep whole-minute precision; task and interruption durations keep their existing second
+precision. Speaker names, captions, meeting titles, task goals, model answers and report/export
+content remain in their original language. Historical progress and errors without a known system
+source are shown as original content beside a translated status, rather than guessed or rewritten.
 
 ## Supported browsers
 
