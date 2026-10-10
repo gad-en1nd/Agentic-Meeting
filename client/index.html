@@ -22,7 +22,7 @@
         }
         if (saved === "zh-CN" || saved === "en") locale = saved;
         else {
-          var languages = navigator.languages && navigator.languages.length
+          var languages = navigator.languages != null
             ? navigator.languages : [navigator.language];
           for (var i = 0; i < languages.length; i += 1) {
             if (/^zh(?:-|$)/i.test(languages[i])) { locale = "zh-CN"; break; }

@@ -12,7 +12,7 @@ type I18n = {
 const I18nContext = createContext<I18n | null>(null);
 
 function browserLocale(): Locale {
-  return resolveLocale(navigator.languages?.length ? navigator.languages : [navigator.language]);
+  return resolveLocale(navigator.languages ?? [navigator.language]);
 }
 
 function savedPreference(): LocalePreference {

@@ -28,7 +28,7 @@ for (const [languages, locale] of [
   test(`浏览器语言 ${languages.join("/") || "empty"} 自动选择 ${locale}`, async ({ page }) => {
     await page.addInitScript((values) => {
       Object.defineProperty(navigator, "languages", { configurable: true, value: values });
-      Object.defineProperty(navigator, "language", { configurable: true, value: "fr-FR" });
+      Object.defineProperty(navigator, "language", { configurable: true, value: "en-US" });
     }, languages);
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("lang", locale);
@@ -91,11 +91,12 @@ test("存储读写被拒绝仍可切换当前页面，会议原文不受影响",
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
 });
 
-for (const mode of ["manual", "automatic", "storage-denied"] as const) {
+for (const mode of ["manual", "automatic", "storage-denied", "empty-languages"] as const) {
   test(`主模块失败的 ES5 提示同 catalog 且使用 ${mode} 语言规则`, async ({ page }) => {
     await page.addInitScript((choice) => {
       Object.defineProperty(navigator, "languages", {
-        value: choice === "manual" ? ["zh-CN"] : ["fr-FR", "en-US"],
+        value:
+          choice === "manual" ? ["zh-CN"] : choice === "empty-languages" ? [] : ["fr-FR", "en-US"],
       });
       if (choice === "manual") localStorage.setItem("agentic-meeting.ui-language", "en");
       if (choice === "storage-denied")
@@ -104,15 +105,19 @@ for (const mode of ["manual", "automatic", "storage-denied"] as const) {
             throw new DOMException("denied", "SecurityError");
           },
         });
+      Object.defineProperty(navigator, "language", { value: "en-US" });
     }, mode);
     await page.route(/\/assets\/.*\.js$/, (route) =>
       route.fulfill({ contentType: "text/javascript", body: "export const broken = ;" }),
     );
     await page.goto("/");
-    await expect(page.getByRole("alert")).toContainText("The page could not start.");
+    const empty = mode === "empty-languages";
+    await expect(page.getByRole("alert")).toContainText(
+      empty ? "页面没能启动。" : "The page could not start.",
+    );
     await expect(page.getByRole("alert")).toContainText("Chrome 111");
-    await expect(page.locator("html")).toHaveAttribute("lang", "en");
-    await expect(page).toHaveTitle("Agentic Meeting");
+    await expect(page.locator("html")).toHaveAttribute("lang", empty ? "zh-CN" : "en");
+    await expect(page).toHaveTitle(empty ? "组会助理" : "Agentic Meeting");
   });
 }
 
