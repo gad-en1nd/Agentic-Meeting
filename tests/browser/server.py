@@ -25,13 +25,14 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 from starlette.routing import Mount
 
-from agentic_meeting.agent.tasks import task_dir
+from agentic_meeting.agent.tasks import task_dir, task_message
 from agentic_meeting.config import EXAMPLE_CONFIG_PATH, AppConfig
-from agentic_meeting.messages import notice_message
+from agentic_meeting.messages import event_json, notice_message, task_metadata
 from agentic_meeting.pipeline.bot import AppResources, session_message
 from agentic_meeting.store.db import Store
 from agentic_meeting.types import Utterance
 from agentic_meeting.web.app import create_app
+from agentic_meeting.web.tasks_api import task_json
 
 
 def configuration(root: Path) -> AppConfig:
@@ -301,6 +302,7 @@ def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
         static_dir=Path(__file__).resolve().parents[2] / "client" / "dist",
     )
     control = FastAPI()
+    localization_task_id: str | None = None
 
     @control.get("/state")
     async def state() -> dict[str, Any]:
@@ -361,6 +363,92 @@ def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
     @control.post("/seed-localization")
     async def localization() -> dict[str, Any]:
         return await seed_localization(store)
+
+    @control.post("/localization-task")
+    async def localization_task(body: dict[str, Any]) -> dict[str, Any]:
+        """先保存真实来源，再返回仅供坏消息测试发送的原始 wire。"""
+        nonlocal localization_task_id
+        resources = app.state.resources
+        phase = body.get("phase")
+        now = time.time()
+        wire = None
+        if phase == "seed":
+            if resources.sessions.live is not None or localization_task_id is not None:
+                raise HTTPException(409, "测试任务必须在连接前创建一次")
+            session = await store.create_session("实时任务语言测试", now=now)
+            task = await store.create_task(session.id, goal="原始实时目标", now=now)
+            task = await store.update_task(task.id, status="running", started_at=now)
+            assert task is not None
+            localization_task_id = task.id
+            event = await store.add_task_event(
+                task.id,
+                "tool_call",
+                "正在检索「初始检索片段」",
+                {"message": {"code": "task.tool.search", "params": {"query": "初始检索片段"}}},
+                now=now,
+            )
+        elif phase in {"progress", "failed"}:
+            task = await store.get_task(str(body.get("task_id", "")))
+            live = resources.sessions.live
+            if (
+                task is None
+                or task.id != localization_task_id
+                or live is None
+                or live.session.id != task.session_id
+                or task.status != "running"
+            ):
+                raise HTTPException(409, "需要正在连接的原始测试任务")
+            if phase == "progress":
+                bad = {"code": "notice.recording", "params": {}}
+                event = await store.add_task_event(
+                    task.id,
+                    "tool_call",
+                    "原始未知进度 <img src=x>",
+                    {"message": bad},
+                    now=now,
+                )
+                wire = {
+                    "type": "task_event",
+                    "task_id": task.id,
+                    **event_json(event),
+                    "message": bad,
+                }
+            else:
+                task = await store.update_task(
+                    task.id,
+                    status="failed",
+                    error="不应作为系统模板的中文错误",
+                    finished_at=now,
+                )
+                assert task is not None
+                bad = {"code": "task.failure.timeout", "params": {"minutes": "2"}}
+                event = await store.add_task_event(
+                    task.id,
+                    "status",
+                    "任务失败",
+                    {
+                        "message": {"code": "task.event.failed", "params": {}},
+                        "task_status": task.status,
+                        "task_finished_at": task.finished_at,
+                        "error_message": bad,
+                    },
+                    now=now,
+                )
+                wire = {
+                    **task_message(
+                        task, task_metadata(task, await store.list_task_events(task.id))
+                    ),
+                    "error_message": bad,
+                    "last_event": None,
+                }
+        else:
+            raise HTTPException(400, "测试阶段必须是 seed、progress 或 failed")
+        return {
+            "session": task.session_id,
+            "task": await task_json(store, task),
+            "event": event_json(event),
+            "wire": wire,
+        }
 
     # 放在生产静态站点之前；生产 create_app 从未挂载这些路由。
     app.router.routes.insert(0, Mount("/__test", app=control))
