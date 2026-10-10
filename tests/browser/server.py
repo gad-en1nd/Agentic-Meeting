@@ -27,6 +27,7 @@ from starlette.routing import Mount
 
 from agentic_meeting.agent.tasks import task_dir
 from agentic_meeting.config import EXAMPLE_CONFIG_PATH, AppConfig
+from agentic_meeting.messages import notice_message
 from agentic_meeting.pipeline.bot import AppResources, session_message
 from agentic_meeting.store.db import Store
 from agentic_meeting.types import Utterance
@@ -258,6 +259,10 @@ class ControlledBot:
                         data=session_message(live.session, live.resumed, live.base_secs)
                     )
                 )
+                if resources.cfg.session.recording_notice:
+                    await worker.queue_frame(
+                        RTVIServerMessageFrame(data=notice_message("info", "notice.recording"))
+                    )
 
             @transport.event_handler("on_client_disconnected")
             async def disconnected(_transport: Any, _connection: Any) -> None:
