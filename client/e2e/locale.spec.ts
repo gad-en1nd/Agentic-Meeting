@@ -239,49 +239,94 @@ test("未知、坏参数、跨 family 和旧消息仅显示通用提示且字幕
 });
 
 test("实时任务的坏来源安全降级，原始进度独立显示且可切换", async ({ page, request }) => {
+  const seedResponse = await request.post("/__test/localization-task", {
+    data: { phase: "seed" },
+  });
+  expect(seedResponse.status(), await seedResponse.text()).toBe(200);
+  const seed = await seedResponse.json();
+  const id = seed.task.id;
   await page.goto("/");
   await language(page, "en");
-  await page.getByRole("button", { name: "Start new meeting", exact: true }).first().click();
+  const card = page.getByRole("button", { name: /原始实时目标/ });
+  await expect(card).toContainText("Running");
+  await expect(card).toContainText("Searching for “初始检索片段”");
+  await page.getByRole("button", { name: "Meeting list", exact: true }).click();
+  const connectedTasks = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/tasks" && url.searchParams.get("session_id") === seed.session;
+  });
+  await page.getByRole("button", { name: "Resume: 实时任务语言测试", exact: true }).click();
   await expect(page.getByRole("status").first()).toHaveText("Connected");
   await serverReady(request, 1);
-  const live = (await (await request.get("/__test/state")).json()).live;
-  const id = `${live}.fictional-task`;
-  const task = {
-    type: "task",
+  expect((await (await request.get("/__test/state")).json()).live).toBe(seed.session);
+  const synced = await connectedTasks;
+  expect(synced.status()).toBe(200);
+  await synced.finished();
+  expect((await synced.json()).items).toEqual([seed.task]);
+  await expect(card).toContainText("Running");
+  await expect(card).toContainText("Searching for “初始检索片段”");
+  const initial = await request.get(`/api/tasks/${encodeURIComponent(id)}`);
+  expect(initial.status(), await initial.text()).toBe(200);
+  expect(await initial.json()).toMatchObject({
     id,
-    label: "t-local",
-    goal: "原始实时目标",
     status: "running",
-    brief: null,
-    error: null,
-    modality: "voice",
-    created_at: 1700000000,
-  };
-  await message(request, task);
-  await message(request, {
+    last_event: { message: { code: "task.tool.search", params: { query: "初始检索片段" } } },
+  });
+
+  const progressResponse = await request.post("/__test/localization-task", {
+    data: { phase: "progress", task_id: id },
+  });
+  expect(progressResponse.status(), await progressResponse.text()).toBe(200);
+  const progress = await progressResponse.json();
+  const progressDetail = await request.get(`/api/tasks/${encodeURIComponent(id)}`);
+  expect(progressDetail.status(), await progressDetail.text()).toBe(200);
+  const storedProgress = await progressDetail.json();
+  expect(storedProgress).toMatchObject({ id, status: "running", last_event: progress.event });
+  expect(storedProgress.last_event).not.toHaveProperty("message");
+  expect(progress.wire).toMatchObject({
     type: "task_event",
     task_id: id,
-    id: 1,
-    at: 1700000001,
-    kind: "tool_call",
     summary: "原始未知进度 <img src=x>",
     message: { code: "notice.recording", params: {} },
   });
-  const card = page.getByRole("button", { name: /原始实时目标/ });
+  await expect(card).toContainText("Searching for “初始检索片段”");
+  await message(request, progress.wire);
   await expect(card).toContainText("Task progress details are unavailable.");
+  await expect(card).not.toContainText("初始检索片段");
   await expect(card).toContainText("Original diagnostic: 原始未知进度 <img src=x>");
   await expect(card.locator("img")).toHaveCount(0);
   await language(page, "zh-CN");
   await expect(card).toContainText("任务进度暂不可用");
   await expect(card).toContainText("原始诊断：原始未知进度 <img src=x>");
-  await message(request, {
-    ...task,
+
+  const failedResponse = await request.post("/__test/localization-task", {
+    data: { phase: "failed", task_id: id },
+  });
+  expect(failedResponse.status(), await failedResponse.text()).toBe(200);
+  const failed = await failedResponse.json();
+  const failedDetail = await request.get(`/api/tasks/${encodeURIComponent(id)}`);
+  expect(failedDetail.status(), await failedDetail.text()).toBe(200);
+  expect(await failedDetail.json()).toMatchObject({
+    id,
     status: "failed",
     error: "不应作为系统模板的中文错误",
-    error_message: { code: "task.failure.timeout", params: { minutes: "2" } },
+    error_message: null,
+  });
+  expect(failed.wire).toMatchObject({
+    type: "task",
+    id,
+    status: "failed",
+    error: "不应作为系统模板的中文错误",
     last_event: null,
   });
+  expect(failed.wire.error_message).toEqual({
+    code: "task.failure.timeout",
+    params: { minutes: "2" },
+  });
+  await expect(card).toContainText("进行中");
+  await message(request, failed.wire);
   await expect(card).toContainText("任务执行失败");
+  await expect(card).not.toContainText("进行中");
   await expect(card).not.toContainText("不应作为系统模板");
   await language(page, "en");
   await expect(card).toContainText("The task failed.");
