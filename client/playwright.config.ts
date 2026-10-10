@@ -21,6 +21,8 @@ export default defineConfig({
           firefoxUserPrefs: {
             "media.navigator.streams.fake": true,
             "media.navigator.permission.disabled": true,
+            // 假设备也需算作活跃采集，避免 ICE 只选默认虚拟接口。
+            "media.navigator.permission.fake": true,
             "media.peerconnection.ice.obfuscate_host_addresses": false,
           },
         },

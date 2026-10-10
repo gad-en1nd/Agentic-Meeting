@@ -202,6 +202,7 @@ WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS=1 npm run test:e2e --prefix client
 测试覆盖生产 `create_app`、Store、HTTP 业务接口，以及真实 SmallWebRTC 传输、Pipecat 管线和 RTVI 数据通道。
 推理由受控测试 bot 替代，不启动 ASR、LLM、TTS、向量嵌入或屏幕描述模型。
 Chromium 与 WebKit 使用 CPU WebAudio 麦克风轨道，Firefox 使用浏览器原生的假媒体设备。
+假设备也视为活跃采集，让原生 Firefox 收集可用的 ICE 候选。
 三个引擎都使用 `canvas.captureStream()` 屏幕轨道替代真实桌面采集。
 浏览器对测试服务器之外的请求会被阻断并使测试失败。
 这些检查不验证真实麦克风或屏幕授权、物理设备、模型效果、外部服务、GPU 行为或互联网 ICE 连通性。

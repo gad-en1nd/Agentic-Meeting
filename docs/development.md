@@ -234,7 +234,8 @@ exited, remove only its `agentic-meeting-e2e-*` directory from the system tempor
 Tests exercise production `create_app`, Store and HTTP business endpoints, the real
 SmallWebRTC transport, Pipecat pipeline and RTVI data channel. Inference is replaced by a controlled
 test bot; ASR, LLM, TTS, embeddings and screen caption models are not started. Chromium and WebKit
-use CPU WebAudio microphone tracks; Firefox uses its native fake media devices. All three engines
+use CPU WebAudio microphone tracks; Firefox uses its native fake media devices. Fake devices are
+treated as active capture so native Firefox gathers usable ICE candidates. All three engines
 use `canvas.captureStream()` screen tracks instead of capturing a desktop. Browser requests outside
 the test server are blocked and fail the test. These checks do not validate real microphone or
 screen permissions, physical devices, model quality, external services, GPU behavior or Internet
