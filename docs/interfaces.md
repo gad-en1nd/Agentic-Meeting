@@ -207,6 +207,10 @@ The session lifecycle is described in [architecture.md §3.1](architecture.md).
 - `reports` — `id, session_id, created_at, status ('running' | 'done' | 'failed'), provider, text_md,
 error`. A session may have several; the page shows the latest and exports use the latest `done`
   one. Reports left `running` by a previous process are marked `failed` at startup.
+  Nullable `error_message_json TEXT` stores a validated system message reference for new known failures
+  (§5.9). The additive old-SQLite migration adds only a missing column; old terminal errors/content remain
+  unchanged with NULL metadata. `Report.error_message` exposes the parsed nullable reference; guarded
+  fail/recovery writes and successful clearing preserve existing identities and completion/retention rules.
 - Reserved values of `speakers.idx`: `0` unknown, `-1` the assistant, `-2` typed text. Diarization
   numbers start at 1; speakers created manually in the UI start at 1000.
 - `utterances.source`: `'asr'`, `'assistant'` or `'text'`.
@@ -455,7 +459,7 @@ The `Diarizer` protocol is defined in
 `CtypesBinding` and the asynchronous `NemoDiarizer`, which implements `Diarizer` and runs every
 library call on one single-threaded executor. `diar.build_diarizer(cfg, on_notice=…)` returns a
 `NullDiarizer` when `backend = "none"`, and also when the library or model fails to load, after
-logging the error and notifying the user through `on_notice`.
+logging the error and notifying the user through `on_notice(level, code, params=None)` (§5.9).
 
 `segments(since_secs)` returns segments that **end after** `since_secs`, ordered by start time.
 `finish()` lets the model label the last frames when a stream ends; `labeled_secs()` reports how far
@@ -583,8 +587,8 @@ Details of `TranscriptAssembler`:
 
 ## 5. HTTP API
 
-All endpoints except signaling exchange JSON. Business errors are returned as `{"error": "<message>"}` with
-an appropriate status code; messages are in Chinese. During development the client runs on port
+All endpoints except signaling exchange JSON. Business errors return an appropriate status code and
+`{"error": "<controlled Chinese compatibility text>", "code": "error.…", "params": {…}}` (§5.9). During development the client runs on port
 5173 and proxies `/api` to the application (`client/vite.config.ts`). Readiness 503 responses use
 the status snapshot in §5.8. When an access password is configured, the middleware guards `/api`
 and paths below it, except the public authentication routes in §5.7. The three operational GET
@@ -761,9 +765,9 @@ assistant's name and `-2` the name "文字输入".
 
 - `{id}` is the full task id, `<session id>.t3`.
 - List item: `{"id", "label", "goal", "status", "brief", "error", "modality", "created_at",
-"started_at", "finished_at"}`.
+"started_at", "finished_at"}`, plus nullable `error_message`, `brief_message` and `last_event` (§5.9).
 - The detail view adds `detail_md`, `sources`, `artifacts` (file names), `requested_by` (display
-  name), `requested_t`, `events` (`[{at, kind, summary}]`) and `outbound` — **what the task sent out**:
+  name), `requested_t`, `events` (`[{id, at, kind, summary, message?, error_message?, brief_message?, diagnostic?}]`) and `outbound` — **what the task sent out**:
   `{"goal", "t_from", "t_to", "frames": [{id, t}], "model_host"}`.
 - Artifacts are served only if the task reported them and they were retrieved into the task
   directory. PNG, JPEG, WebP and GIF are returned as images; everything else as
@@ -772,14 +776,14 @@ assistant's name and `-2` the name "文字输入".
 
 ### 5.6 Export and reports
 
-| Method and path                     | Description                                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GET /api/export/{session_id}.md`   | Markdown transcript                                                                              |
-| `GET /api/export/{session_id}.json` | Structured JSON                                                                                  |
-| `GET /api/export/{session_id}.zip`  | Archive with `transcript.md`, `session.json`, `report.md` (if any), `frames/` and `tasks/`       |
-| `POST /api/sessions/{id}/report`    | Starts report generation → 202 `{"report_id", "status": "running"}`                              |
-| `GET /api/sessions/{id}/report`     | The latest report: `{"id", "status", "created_at", "provider", "text_md", "error"}`; 404 if none |
-| `GET /api/sessions/{id}/report.md`  | The latest finished report as a download                                                         |
+| Method and path                     | Description                                                                                                       |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /api/export/{session_id}.md`   | Markdown transcript                                                                                               |
+| `GET /api/export/{session_id}.json` | Structured JSON                                                                                                   |
+| `GET /api/export/{session_id}.zip`  | Archive with `transcript.md`, `session.json`, `report.md` (if any), `frames/` and `tasks/`                        |
+| `POST /api/sessions/{id}/report`    | Starts report generation → 202 `{"report_id", "status": "running"}`                                               |
+| `GET /api/sessions/{id}/report`     | The latest report: `{"id", "status", "created_at", "provider", "text_md", "error", "error_message"}`; 404 if none |
+| `GET /api/sessions/{id}/report.md`  | The latest finished report as a download                                                                          |
 
 **Markdown export** (`web/export.py`):
 
@@ -1212,6 +1216,192 @@ Task-count collection failed while a caption sample is available, HTTP 200:
 }
 ```
 
+### 5.9 Structured system messages and UI locale
+
+Business HTTP errors use `{"error": "<controlled Chinese compatibility text>", "code": "error.…", "params": {…}}`.
+For example, a wrong password returns status 401 and
+`{"error": "口令不对", "code": "error.auth.wrong_password", "params": {}}`.
+Status codes, cookies, CSRF checks and response headers (including `Retry-After`) keep their existing semantics.
+This includes direct JSON responses from the authentication login route and middleware, not only application exception handlers.
+The operational snapshots in §5.8 retain their existing schemas. Unexpected exception details use
+`error.request.failed`, an unknown route uses `error.request.not_found`, and invalid request validation uses
+`error.request.invalid`; validation errors and signaling exceptions are not echoed into the response.
+
+Notices in §6.1 use `{"type": "notice", "level": "info" | "warn" | "error", "text": "<controlled Chinese compatibility text>", "code": "notice.…", "params": {…}}`.
+`error` and `text` remain strings so previously deployed clients continue to display errors and the recording disclosure.
+New clients use the structured identity and translate at render time; switching UI language also updates notices and login errors already on screen.
+They never treat compatibility text as a translated system explanation.
+A text-only older server remains connectable: the new client shows a localized generic notice or HTTP-status failure,
+while the independent recording indicator in §6.1 remains visible. Old-server diagnostic detail is not translated or inferred.
+
+Codes are stable dotted ASCII identifiers. Parameters are explicitly typed scalar JSON values; they never contain
+exception strings, complete request bodies, filesystem paths, environment values, tokens, keys or external diagnostics.
+Task progress may interpolate the bounded query/URL/tool/server display fragment already present in its compatibility
+summary; this is plain content, never a source of codes or executable markup. Whole tool arguments are not exposed.
+System message references accept only the registry below. `params` must be an object with exactly the declared keys;
+arrays, null, unknown keys, wrong types, missing required values and nonfinite numbers fail validation.
+Parameterless messages accept `{}` or missing `params`. Unknown or malformed structured notices with a valid
+level preserve that level and render `notice.generic`; invalid levels are ignored. HTTP failures retain their
+status and use a local status explanation. A malformed message never throws into the caption stream.
+Native RTVI fatal errors use a local connection failure explanation; nonfatal native errors remain suppressed
+because service degradation is conveyed by notices.
+
+The network registry is shared by the producers and the client catalogs. Braced suffix lists below expand to
+individual keys; braces are not sent on the wire.
+
+| Codes                                                                                                                                                                                                                                                                                                    | Parameters                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `notice.generic`, `notice.recording`, `notice.microphone.low`, `notice.diar.unavailable`, `notice.diar.failed`, `notice.diar.renumbered`, `notice.asr.unavailable`, `notice.asr.recovered`, `notice.text.invalid`, `notice.text.empty`                                                                   | none                              |
+| `notice.text.too_long`, `notice.text.queue_full`                                                                                                                                                                                                                                                         | `max`: number                     |
+| `notice.text.queued`                                                                                                                                                                                                                                                                                     | `position`: number                |
+| `notice.llm.{auth,not_found,rate_limited,timeout,connection,unknown}`, `notice.tts.{auth,not_found,rate_limited,timeout,connection,unknown}`                                                                                                                                                             | none                              |
+| `notice.llm.server`, `notice.tts.server`                                                                                                                                                                                                                                                                 | `status`: number, integer 500–599 |
+| `error.request.{failed,not_found,invalid,json_required,object_required,too_large}`, `error.storage.not_ready`, `error.cleanup.not_ready`, `error.session.{not_found,no_current,busy,delete_failed,id_invalid,patch_fields_invalid,title_invalid,keep_invalid}`, `error.connection.{offer_invalid,fatal}` | none                              |
+| `error.session.title_too_long`                                                                                                                                                                                                                                                                           | `max`: number                     |
+| `error.auth.{required,csrf,wrong_password,rate_limited,disabled,body_too_large,body_invalid}`                                                                                                                                                                                                            | none                              |
+| `error.utterance.{pagination_invalid,ids_invalid,speaker_choice_invalid}`, `error.speaker.{index_invalid,not_found,name_invalid,merge_target_invalid,merge_kind_invalid,merge_self}`                                                                                                                     | none                              |
+| `error.utterance.too_many`, `error.speaker.name_too_long`                                                                                                                                                                                                                                                | `max`: number                     |
+| `error.frame.{disabled,no_live,captured_at_invalid,not_found,format_invalid,image_invalid,empty,save_failed}`                                                                                                                                                                                            | none                              |
+| `error.frame.side_too_large`                                                                                                                                                                                                                                                                             | `maxSide`: number                 |
+| `error.frame.body_too_large`                                                                                                                                                                                                                                                                             | `maxMB`: number                   |
+| `error.frame.time_skew`                                                                                                                                                                                                                                                                                  | `maxSecs`: number                 |
+| `error.task.{not_found,disabled,artifact_not_found}`, `error.report.{live,no_model,running,not_found,not_ready}`, `error.export.format_invalid`                                                                                                                                                          | none                              |
+| `task.event.{started,succeeded,failed,cancelled,unknown}`, `task.result.fallback`                                                                                                                                                                                                                        | none                              |
+| `task.tool.search`                                                                                                                                                                                                                                                                                       | `query`: string                   |
+| `task.tool.open`                                                                                                                                                                                                                                                                                         | `url`: string                     |
+| `task.tool.call`, `task.mcp.unavailable`                                                                                                                                                                                                                                                                 | `name`: string                    |
+| `task.tool.result`                                                                                                                                                                                                                                                                                       | `chars`: number                   |
+| `task.tool.{empty,error,code_timeout}`, `task.sandbox.{exec,input,write,image,exec_done,input_done,write_done,image_done,unavailable}`                                                                                                                                                                   | none                              |
+| `task.failure.timeout`                                                                                                                                                                                                                                                                                   | `minutes`: number                 |
+| `task.failure.turn_limit`                                                                                                                                                                                                                                                                                | `maxTurns`: number                |
+| `task.failure.remote_status`                                                                                                                                                                                                                                                                             | `status`: number, integer 100–599 |
+| `task.failure.{cancelled,shutdown,restart,disabled,not_configured,dependency,auth,connection,runtime,unknown}`                                                                                                                                                                                           | none                              |
+| `report.failure.{timeout,interrupted,no_model,no_transcript,session_missing,unknown}`                                                                                                                                                                                                                    | none                              |
+
+`max`, `position` and `maxSide` are integers in 1–1,000,000; `maxMB` is an integer in 0–1,000,000
+(the existing byte-limit floor can be zero); `maxSecs` is finite and in (0, 1,000,000].
+`minutes`/`maxTurns` are integers in 1–1,000,000; `chars` is an integer in 0–1,000,000,000.
+Query, URL, tool and server display fragments are nonempty strings of at most 61 Unicode characters
+(the existing 60-character clip plus an optional ellipsis), with whitespace collapsed by the producer.
+These are display-validation bounds, not changes to configured admission limits. Producers use the actual
+existing limits. Numbers use locale formatting; `maxSecs` displays rounded whole seconds, preserving the
+existing explanation. HTTP status fallbacks use `Response.status`, not a supplied body value. Login rate-limit
+display derives positive bounded whole minutes from `Retry-After`, using a generic retry message if invalid.
+Controlled LLM/TTS reasons classify authentication rejection, not-found, rate limit, server 5xx, timeout,
+connection failure and unknown; unknown exceptions stay in logs and are not inserted into the message.
+
+| Producers                                                                                                                                                                             | Consumers                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `web/app.py` handlers/signaling validation; `web/sessions_api.py`, `frames_api.py`, `tasks_api.py`, `reports_api.py`, `export.py`; `screen/ingest.py` image/time/save validation      | `client/src/api.ts` and the action failure paths in `useMeetingClient.ts` / `useScreenShare.ts`                       |
+| `web/auth.py` login and middleware, including direct JSON errors                                                                                                                      | `client/src/auth.ts`, `AuthGate.tsx`, `LoginPage.tsx`; API unauthorized notification                                  |
+| `pipeline/bot.py` recording, low microphone level, malformed typed input, pending queue and callback adapters                                                                         | `protocol.ts` → `useMeetingClient.ts` → `meetingState.ts` → `AssistantPanel.tsx`                                      |
+| `diar/__init__.py` startup fallback; `pipeline/session.py` renumbering; `pipeline/text_input.py` admission/queue notices; `pipeline/errors.py` LLM/TTS degradation                    | The shared `notice(level, code, params=None)` callback and the same browser notice path                               |
+| `asr/stt_service.py` outage/recovery; `pipeline/recorder.py` runtime diarization failure                                                                                              | The same browser notice path                                                                                          |
+| `agent/runner.py` own progress templates, sandbox/MCP degradation and controlled RunnerError branches; `agent/tasks.py` admission/status/timeout/cancel/restart/shutdown/finalization | Persisted task-event message projection → HTTP list/detail/cancel and RTVI task/task_event → task state and TaskPanel |
+| `pipeline/report.py` known failure/cancellation/recovery branches → `reports.error_message_json`; `web/reports_api.py`                                                                | Report HTTP error_message → report state and ReportPanel; survives page/server reload                                 |
+| Client device/transport errors, local typed-input validation, browser-capability restrictions and screen capture failures                                                             | Structured local notice state, translated when rendered                                                               |
+
+Callback parameter mappings use the same numeric types and validation as wire messages. Pending notices store
+their level/code/params until ready. Throttling, FIFO, recovery, recording-ready and failure-isolation semantics
+are unchanged. Recorder backlog/storage logs do not become new notices. All UI text consumers include the
+TSX panels, login/control views, plain TypeScript display helpers, document title/lang, tooltips and ARIA labels.
+
+**Task/report provenance and persistence.** A message reference is `{"code": "…", "params": {…}}`.
+New system task events keep the existing Chinese `summary` and any existing payload, adding a reserved
+`payload.message` reference produced by the manager/runner's own branch (§8.3). Terminal status events also
+record `payload.task_status` and `payload.task_finished_at`, and, where applicable, `payload.error_message` or
+`payload.brief_message` (the parser's fixed fallback brief). Raw arguments/tool output cannot supply those
+reserved fields. HTTP event objects and RTVI task_event add their event `id` and validated `message`, `error_message`,
+`brief_message` and optional original `diagnostic` content; they never send the entire payload/arguments.
+Task list/detail/cancel responses and RTVI task messages additionally expose nullable `error_message`,
+`brief_message` and `last_event` from persisted event metadata. `last_event` is null or the same event projection
+as HTTP detail: `{"id": <integer>, "at": <Unix seconds>, "kind": <event kind>, "summary": <original text>,
+"message"?: <reference>, "error_message"?: <reference>, "brief_message"?: <reference>, "diagnostic"?: <original text>}`.
+For example, a new tool result retains summary and carries `message={"code":"task.tool.result","params":{"chars":320}}`.
+A terminal reason is used only if its recorded
+status/completion time matches the current task; select the newest matching terminal event by event id,
+not by compatibility summary or wall-clock equality alone. Terminal metadata is persisted before announcing
+the updated task, so the first RTVI task already carries the same error_message/brief_message as HTTP reload.
+If event persistence fails, keep the existing status/error update and use the generic localized fallback;
+recording/captions must continue. Absent/invalid metadata uses the localized status fallback.
+The last event reference is stored with its original summary in client state, not as translated lastStep text.
+The same projection restores the card/detail after HTTP reload; no locale-specific text is written to storage.
+
+Known task failure sources are manager timeout/cancel/shutdown/restart, and explicit runner branches for
+configuration/dependency/auth/connection/HTTP status/turn limit/runtime failure. Their code comes from the
+branch or a typed RunnerError reference, never from matching the error string. Generic injected/unknown
+runner errors use task.failure.unknown. Startup recovery adds metadata only for unfinished tasks that the
+existing recovery operation has just transitioned; completed historical tasks/events are not backfilled.
+
+Reports add one nullable `error_message_json TEXT` column (§2.5), containing only a validated message
+reference. Store's existing additive migration adds a missing column without rewriting old error/text_md;
+old terminal rows remain NULL. Reopening the same database is idempotent. Bad JSON, unknown codes or
+invalid parameters safely project to null (never expose the JSON as text), and the client uses a generic
+localized reason. Report.error_message maps valid JSON to a nullable reference, and GET report
+adds error_message while keeping every existing response field. ReportWorker supplies it at its own timeout,
+known unavailable/empty/missing-session branch, cancellation/stop or unfinished-report startup recovery;
+unknown external failures use report.failure.unknown, with the existing error kept separately as diagnostics.
+The metadata and original error are written together by the existing guarded failure operation: session/id/
+write_token and running-status checks, deletion/pending gates, completion timestamps and retention remain
+unchanged. Successful completion clears error metadata with error. Stale identities cannot overwrite old
+reports. Startup recovery annotates only rows it already transitions from running, never old terminal rows.
+No marker is encoded into error, no sidecar or generalized metadata store is introduced, and no historical
+text is guessed or translated. JSON/Markdown/ZIP exports retain their existing format and original text;
+the new report metadata is not added to exports.
+
+New clients render the trusted system message as the primary status/reason, including known timeout and
+interruption. Compatibility summary/error/brief remain for old clients and exports; controlled templates
+are not shown again as untranslated diagnostics. External diagnostics are distinct original content: for
+unknown/runtime failures show the existing error under a localized diagnostic label, and sandbox/MCP notes
+may supply a bounded original diagnostic separately from their controlled message. Missing provenance in
+historical events/reports uses a localized status label and separately labelled original summary/error,
+without language inference. Malformed references show a generic localized system label and preserve safe
+original content; parsing never interrupts captions. UI switching translates all references already in state. Each field accepts its own code family:
+event message accepts task.event/tool/sandbox/mcp; error_message accepts task.failure or report.failure for
+its respective object; brief_message accepts task.result.fallback only. An optional diagnostic is bounded to
+200 Unicode characters and is displayed as plain text, never used as interpolation or classification input.
+
+The UI supports `zh-CN` and `en`. Automatic selection checks `navigator.languages` in preference order
+(falling back to `navigator.language` if no list is available): case-insensitive `zh`/`zh-*` selects Chinese,
+`en`/`en-*` selects English, unsupported entries are skipped, and an empty/all-unsupported list selects Chinese.
+An explicit choice overrides browser changes and is saved locally as `agentic-meeting.ui-language` with value
+`zh-CN` or `en`; choosing automatic removes that value and immediately resolves current browser preferences.
+Invalid stored values behave as automatic; storage read/write/removal failures do not prevent current-page
+selection. Automatic mode follows `languagechange`. The provider encloses the authentication gate, and
+document language/title, login and the meeting UI update together. The pre-module startup/build-failure
+fallback in index.html is also translated from the same catalogs, using the existing transformIndexHtml
+build injection and ES5-parseable fallback script; it must not require React/provider startup. Its automatic/
+manual locale selection follows the same browser/storage policy without a separately maintained dictionary.
+
+Catalogs use flat dotted namespaces and named scalar interpolation with declared string/number types.
+Both locales must have exactly the same keys and placeholders; parameter declarations must match those
+placeholders. CI rejects mismatches. Invalid interpolation uses a localized generic explanation, never raw
+keys or unfilled placeholders. Values remain text, never executable markup. Network codes are restricted to
+the registry above even though local UI interpolation may accept user-owned names/titles as strings.
+
+Dates and numbers use `Intl` with the existing browser-local time-zone semantics. Each duration keeps its
+existing precision and zero behavior; only numbers/units are localized:
+
+- Session duration (`sessionView.formatDuration`) floors whole minutes: below 60 seconds displays less than
+  one minute; otherwise minutes, or hours plus two-digit remaining minutes.
+- Task duration (`tasks.taskDuration`) rounds the elapsed time to seconds, clamps negative values to zero,
+  displays seconds below 60 and cumulative minutes plus two-digit remaining seconds thereafter, even beyond
+  an hour. Missing start/end timestamps still display an empty string.
+- Interruption duration (`resume.formatSpan`) rounds and clamps seconds; below 60 displays seconds,
+  below an hour displays whole minutes, and thereafter hours plus two-digit remaining minutes. Zero is zero
+  seconds, and 59 seconds remains 59 seconds.
+- Caption/frame timeline labels keep their existing second flooring and m:ss/h:mm:ss/HH:MM:SS forms;
+  wall-clock display retains seconds. Invalid/nonfinite input uses a localized placeholder without changing
+  numeric timeline or clock computations.
+
+The foundation's session-duration function is not required for task/interruption callers; no universal
+formatter is introduced. Raw epoch seconds, connection spans, Clock and stored timestamps are unchanged.
+UI locale is independent of meeting language: captions, names (including stored default speaker names),
+titles, user/model goals/briefs, detail_md, report text_md (including its generated document heading), frame
+captions and external diagnostics remain original artifact/content text. System progress/failure templates
+with explicit provenance use the references above. There is no name guessing or historical-content rewrite;
+the sole schema addition is nullable report message provenance. CLI/log output keeps its existing language.
+
 ## 6. Data-channel messages
 
 ### 6.1 Server → browser
@@ -1219,24 +1409,25 @@ Task-count collection failed while a caption sample is available, HTTP 200:
 The server pushes `RTVIServerMessageFrame(data=<object>)`; the browser receives it in
 `onServerMessage`. Every message has a `type`:
 
-| `type`             | Other fields                                                              | Meaning                                                                                                                                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `caption`          | `segment_id, speaker_idx, speaker_name, t_start, stable, unstable`        | Live caption of the segment being spoken. A later message with the same `segment_id` replaces the earlier one                                                                                                             |
-| `utterance`        | `id, segment_id, speaker_idx, speaker_name, t_start, t_end, text, source` | A caption has been finalized and stored; it replaces the live caption with that `segment_id`. If `id` is already on the page, a new segment was merged into that caption (§4.3): `text` is the merged text                |
-| `utterance_update` | `id, speaker_idx, speaker_name`                                           | Speaker correction                                                                                                                                                                                                        |
-| `speaker`          | `idx, display_name`                                                       | Speaker renamed                                                                                                                                                                                                           |
-| `speakers_merged`  | `from, into, display_name`                                                | Speaker `from` was merged into `into`                                                                                                                                                                                     |
-| `frame`            | `id, t, width, height`                                                    | New screenshot                                                                                                                                                                                                            |
-| `frame_caption`    | `id, caption`                                                             | Screenshot summary available                                                                                                                                                                                              |
-| `assistant_state`  | `state`: `idle` / `listening` / `thinking` / `speaking`                   | Assistant state                                                                                                                                                                                                           |
-| `task`             | `id, label, goal, status, brief, error, modality, created_at`             | Task created or changed; `id` is the full id and `label` the short one (`t3`)                                                                                                                                             |
-| `task_event`       | `task_id, at, kind, summary`                                              | Task progress                                                                                                                                                                                                             |
-| `notice`           | `level`: `info` / `warn` / `error`, `text`                                | Something the user should know, such as a degraded service. Errors of the realtime LLM and TTS are translated into notices by `pipeline/errors.py`; of Pipecat's own RTVI `error` messages the page shows only fatal ones |
-| `session`          | `id, title, keep, started_at, resumed, base_secs, state`                  | Sent once after connecting: which session the connection belongs to, its current keep flag, whether it is a resume, and the timeline origin of this connection                                                            |
-| `session_closed`   | `reason`: `taken_over` / `ended` / `server_stopping`                      | Why the server is about to close the connection (best effort)                                                                                                                                                             |
+| `type`             | Other fields                                                                                                       | Meaning                                                                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `caption`          | `segment_id, speaker_idx, speaker_name, t_start, stable, unstable`                                                 | Live caption of the segment being spoken. A later message with the same `segment_id` replaces the earlier one                                                                                                                                 |
+| `utterance`        | `id, segment_id, speaker_idx, speaker_name, t_start, t_end, text, source`                                          | A caption has been finalized and stored; it replaces the live caption with that `segment_id`. If `id` is already on the page, a new segment was merged into that caption (§4.3): `text` is the merged text                                    |
+| `utterance_update` | `id, speaker_idx, speaker_name`                                                                                    | Speaker correction                                                                                                                                                                                                                            |
+| `speaker`          | `idx, display_name`                                                                                                | Speaker renamed                                                                                                                                                                                                                               |
+| `speakers_merged`  | `from, into, display_name`                                                                                         | Speaker `from` was merged into `into`                                                                                                                                                                                                         |
+| `frame`            | `id, t, width, height`                                                                                             | New screenshot                                                                                                                                                                                                                                |
+| `frame_caption`    | `id, caption`                                                                                                      | Screenshot summary available                                                                                                                                                                                                                  |
+| `assistant_state`  | `state`: `idle` / `listening` / `thinking` / `speaking`                                                            | Assistant state                                                                                                                                                                                                                               |
+| `task`             | `id, label, goal, status, brief, error, modality, created_at`, optional `error_message, brief_message, last_event` | Task created or changed; `id` is the full id and `label` the short one (`t3`)                                                                                                                                                                 |
+| `task_event`       | `task_id, id, at, kind, summary`, optional `message, error_message, brief_message, diagnostic`                     | Task progress                                                                                                                                                                                                                                 |
+| `notice`           | `level`: `info` / `warn` / `error`, `code, params, text`                                                           | Something the user should know, such as a degraded service. Structured system messages are translated at render time (§5.9); realtime LLM/TTS failures become notices in `pipeline/errors.py`. Native RTVI errors display only fatal failures |
+| `session`          | `id, title, keep, started_at, resumed, base_secs, state`                                                           | Sent once after connecting: which session the connection belongs to, its current keep flag, whether it is a resume, and the timeline origin of this connection                                                                                |
+| `session_closed`   | `reason`: `taken_over` / `ended` / `server_stopping`                                                               | Why the server is about to close the connection (best effort)                                                                                                                                                                                 |
 
 The `session.keep` flag is read from current persisted state when the ready message is sent.
-With `session.recording_notice=true`, send one existing `notice` with `level="info"` and
+With `session.recording_notice=true`, send one `notice` with `level="info"`,
+`code="notice.recording"`, `params={}`, and the compatibility
 `text="会议正在转录，发言和共享画面会保存在服务器上"` after the session message for each successful
 ready connection, including new meetings and manual resumes. Repeated ready
 callbacks for the same connection do not repeat it. Disabling this setting suppresses only this
@@ -1458,8 +1649,14 @@ The agent's final answer must be this JSON object:
 
 ### 8.3 Progress events
 
-The runner translates the agent framework's stream events into one-sentence summaries in Chinese
-that can be read aloud.
+The runner translates the agent framework's stream events into one-sentence Chinese compatibility
+summaries that can be read aloud, and explicitly attaches a system message reference (§5.9). The browser
+translates the reference at render time; it does not infer a template by reading historical summaries.
+`task_events.payload_json` retains existing details and adds reserved `message`, optional `error_message`,
+`brief_message` and `diagnostic`; terminal status provenance also records task status/finished_at. HTTP/RTVI
+project only those validated display fields. The examples below remain the original compatibility summaries.
+Unknown external/injected events retain their original content; malformed references use a localized generic
+step. Queries/tool names are clipped plain-text interpolation; exception diagnostics are separate content.
 
 | Event           | `kind`        | Example `summary`                |
 | --------------- | ------------- | -------------------------------- |

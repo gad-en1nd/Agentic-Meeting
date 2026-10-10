@@ -183,6 +183,9 @@ rows = conn.execute(
   喂给模型的「新增转录」里按时间夹着这一段的画面摘要行。
 - `reports`（会后报告）：`id, session_id, created_at, status('running'|'done'|'failed'), provider, text_md, error`；
   同一会话可以有多份，页面显示最近一份，导出取最近一份 `done` 的。服务启动时把遗留的 `running` 标为 `failed`。
+  可空 error_message_json TEXT 保存新已知失败的系统消息引用（§5.9）。旧 SQLite 迁移只在缺列时新增，
+  旧终态错误/正文不变，元数据为 NULL。Report.error_message 提供解析后的可空引用；
+  受保护失败/恢复写入及成功清除保持原身份、完成时间与保留语义。
 - `speakers.idx` 的保留值：`0` 未知、`-1` 助理、`-2` 键入的文字（默认显示名「文字输入」，可改名）；说话人区分的输出从 `1` 起。
 - `utterances.source`：`'asr'`（语音识别）、`'assistant'`（助理自己的话）、`'text'`（浏览器输入框键入）。
 - `tasks.modality`：`'voice'` / `'text'`，委托任务的那一轮是语音还是文字，任务完成后的播报据此决定出不出声。
@@ -394,7 +397,7 @@ token 仅供内部使用，不出现在 HTTP、数据通道消息或导出中。
 
 [`diar/nemo_ctypes.py`](../../src/agentic_meeting/diar/nemo_ctypes.py) 包含同步的 `CtypesBinding`
 和异步的 `NemoDiarizer`（实现 `Diarizer` 协议，所有底层调用在同一个单线程池里）。工厂 `diar.build_diarizer(cfg, on_notice=…)`：
-`backend = "none"` 返回 `NullDiarizer`；动态库或模型加载失败时记录错误、通过 `on_notice` 提醒用户并降级为 `NullDiarizer`。
+`backend = "none"` 返回 `NullDiarizer`；动态库或模型加载失败时记录错误、通过 `on_notice(level, code, params=None)` 提醒用户并降级为 `NullDiarizer`（§5.9）。
 `segments(since_secs)` 只返回**结束时间晚于** `since_secs` 的分段，按开始时间排序。另有 `finish()`（流结束时让模型标注完最后几帧）
 和 `labeled_secs()`（已标注到的时刻）。
 
@@ -510,7 +513,8 @@ CUDA0。它**不是** `nvidia-smi` 的序号——两者的排序规则不同，
 
 ## 5. HTTP 接口
 
-除信令外，全部是 JSON；业务错误返回 `{"error": "<中文说明>"}` 和合适的状态码。
+除信令外，全部是 JSON；业务错误返回合适的状态码与
+`{"error": "<受控中文兼容文案>", "code": "error.…", "params": {…}}`（§5.9）。
 开发时前端跑在 5173 端口并把 `/api` 代理到应用（见 `client/vite.config.ts`）。
 就绪检查的 503 响应保留 §5.8 定义的状态快照。配置了访问口令时，中间件保护 `/api`
 及其下路径，§5.7 的公开认证接口除外。§5.8 的三个运维 GET 位于 `/api` 之外，保持匿名。
@@ -652,6 +656,9 @@ ICE 服务器连接，同一局域网内照样能连上。列表为空（默认�
 
 ### 5.5 任务
 
+任务列表/详情/取消响应保留全部既有字段，并增加可空 error_message、brief_message、last_event（§5.9）。
+事件增加 id，保留 at/kind/summary，额外投影可选 message/error_message/brief_message/diagnostic，不透传整份 payload。
+
 | 方法与路径                             | 说明                              |
 | -------------------------------------- | --------------------------------- |
 | `GET /api/tasks?session_id=`           | 任务列表（不含详细结果）          |
@@ -664,7 +671,7 @@ ICE 服务器连接，同一局域网内照样能连上。列表为空（默认�
 - 路径里的 `{id}` 是完整编号（`<会话 id>.t3`）。`GET /api/tasks` 的 `session_id` 省略 = 当前会话，响应 `{"items": [...]}`。
 - 列表项：`{"id", "label", "goal", "status", "brief", "error", "modality", "created_at", "started_at", "finished_at"}`。
 - 详情在列表项之外还有：`detail_md`、`sources`、`artifacts`（文件名）、`requested_by`（交办人的显示名）、`requested_t`、
-  `events`（`[{at, kind, summary}]`，不含工具参数等细节）、`outbound`——**这次任务外发的内容**：
+  `events`（`[{id, at, kind, summary, message?, error_message?, brief_message?, diagnostic?}]`，不含工具参数等细节）、`outbound`——**这次任务外发的内容**：
   `{"goal", "t_from", "t_to", "frames": [{id, t}], "model_host"}`。
 - `POST …/cancel` 返回取消后的列表项；任务已经结束时原样返回，不算错；后台任务功能没开而任务又没结束时 503。
 - 产物：只给任务自己报告过、并且确实取回了任务目录的文件，其余 404。PNG / JPEG / WebP / GIF 按图片返回；
@@ -678,14 +685,14 @@ ICE 服务器连接，同一局域网内照样能连上。列表为空（默认�
 
 ### 5.6 导出与报告
 
-| 方法与路径                          | 说明                                                                                                                        |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/export/{session_id}.md`   | Markdown 转录：标题与时间 → 纪要 → 按时间排列的发言（相邻同一说话人的合并成段）→ 截图引用 → 任务结果                        |
-| `GET /api/export/{session_id}.json` | 结构化 JSON：会话、说话人、发言、截图、纪要、任务（含事件）、各次连接、最近一份报告                                         |
-| `GET /api/export/{session_id}.zip`  | 完整包：`transcript.md`、`session.json`、`report.md`（若有）、`frames/`、`tasks/` 下的产物                                  |
-| `POST /api/sessions/{id}/report`    | 触发生成会后报告（异步）；响应 202 `{"report_id", "status": "running"}`；该会话已有一份在生成时返回 409                     |
-| `GET /api/sessions/{id}/report`     | 最近一份：`{"id", "status": "running" \| "done" \| "failed", "created_at", "provider", "text_md", "error"}`；还没有返回 404 |
-| `GET /api/sessions/{id}/report.md`  | 最近一份报告的文本下载                                                                                                      |
+| 方法与路径                          | 说明                                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/export/{session_id}.md`   | Markdown 转录：标题与时间 → 纪要 → 按时间排列的发言（相邻同一说话人的合并成段）→ 截图引用 → 任务结果                                         |
+| `GET /api/export/{session_id}.json` | 结构化 JSON：会话、说话人、发言、截图、纪要、任务（含事件）、各次连接、最近一份报告                                                          |
+| `GET /api/export/{session_id}.zip`  | 完整包：`transcript.md`、`session.json`、`report.md`（若有）、`frames/`、`tasks/` 下的产物                                                   |
+| `POST /api/sessions/{id}/report`    | 触发生成会后报告（异步）；响应 202 `{"report_id", "status": "running"}`；该会话已有一份在生成时返回 409                                      |
+| `GET /api/sessions/{id}/report`     | 最近一份：`{"id", "status": "running" \| "done" \| "failed", "created_at", "provider", "text_md", "error", "error_message"}`；还没有返回 404 |
+| `GET /api/sessions/{id}/report.md`  | 最近一份报告的文本下载                                                                                                                       |
 
 **Markdown 导出的实现（`web/export.py`）**：
 
@@ -1083,6 +1090,173 @@ age 均为 `null`；关闭的画面摘要队列深度已知为 0，启用但资�
 }
 ```
 
+### 5.9 结构化系统消息与界面语言
+
+业务 HTTP 错误使用 `{"error": "<受控中文兼容文案>", "code": "error.…", "params": {…}}`。
+例如口令错误返回 401 与 `{"error": "口令不对", "code": "error.auth.wrong_password", "params": {}}`。
+状态码、cookie、CSRF 检查和响应头（包括 `Retry-After`）保持原语义。
+这覆盖认证登录接口与中间件直接返回的 JSON，不只应用的异常处理器。
+§5.8 运维快照保持既有结构。未知异常详情使用 `error.request.failed`，未知路由使用
+`error.request.not_found`，请求校验错误使用 `error.request.invalid`；不回显校验详情或信令异常原文。
+
+§6.1 提示使用 `{"type": "notice", "level": "info" | "warn" | "error", "text": "<受控中文兼容文案>", "code": "notice.…", "params": {…}}`。
+保留字符串 `error` 和 `text`，使已部署的旧客户端仍能显示错误及录制告知。
+新客户端保存结构化标识，在渲染时翻译；切换界面语言也会更新已有提示和登录错误。
+不把兼容文案当作已经翻译的系统说明。
+仅发送文本的旧服务端仍可连接：新客户端显示本地化通用提示或 HTTP 状态说明，
+§6.1 独立录制指示仍可见。不会猜测或翻译旧服务端诊断详情。
+
+code 是稳定的点分 ASCII 标识。params 是明确类型的 JSON 标量参数；不得包含异常字符串、
+完整请求体、文件路径、环境值、令牌、密钥或外部诊断。
+任务进度可插值兼容 summary 本来就显示的有界查询词/URL/工具/服务名字片段；它只作为文本内容，
+不能决定 code 或执行 markup，不暴露整份工具参数。
+系统消息引用只接受下表注册键。params 必须是恰好包含声明键的对象；数组、null、未知键、
+类型错误、缺少必需值与非有限数字均不通过校验。
+无参数消息接受 `{}` 或缺省 params。level 有效但 code/params 未知或损坏的提示保留 level，
+显示 `notice.generic`；无效 level 忽略。HTTP 失败保留状态码，显示本地化状态说明。
+坏消息不得抛异常中断字幕处理。RTVI 原生致命错误显示本地连接失败说明；
+非致命原生错误仍不显示，由结构化提示说明服务降级。
+
+下表网络注册键由发送端与客户端 catalog 共用。花括号中的后缀分别展开为独立键，
+花括号不发送到网络上。
+
+| code                                                                                                                                                                                                                                                                                                     | 参数                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `notice.generic`, `notice.recording`, `notice.microphone.low`, `notice.diar.unavailable`, `notice.diar.failed`, `notice.diar.renumbered`, `notice.asr.unavailable`, `notice.asr.recovered`, `notice.text.invalid`, `notice.text.empty`                                                                   | 无                             |
+| `notice.text.too_long`, `notice.text.queue_full`                                                                                                                                                                                                                                                         | `max`：number                  |
+| `notice.text.queued`                                                                                                                                                                                                                                                                                     | `position`：number             |
+| `notice.llm.{auth,not_found,rate_limited,timeout,connection,unknown}`, `notice.tts.{auth,not_found,rate_limited,timeout,connection,unknown}`                                                                                                                                                             | 无                             |
+| `notice.llm.server`, `notice.tts.server`                                                                                                                                                                                                                                                                 | `status`：number，500–599 整数 |
+| `error.request.{failed,not_found,invalid,json_required,object_required,too_large}`, `error.storage.not_ready`, `error.cleanup.not_ready`, `error.session.{not_found,no_current,busy,delete_failed,id_invalid,patch_fields_invalid,title_invalid,keep_invalid}`, `error.connection.{offer_invalid,fatal}` | 无                             |
+| `error.session.title_too_long`                                                                                                                                                                                                                                                                           | `max`：number                  |
+| `error.auth.{required,csrf,wrong_password,rate_limited,disabled,body_too_large,body_invalid}`                                                                                                                                                                                                            | 无                             |
+| `error.utterance.{pagination_invalid,ids_invalid,speaker_choice_invalid}`, `error.speaker.{index_invalid,not_found,name_invalid,merge_target_invalid,merge_kind_invalid,merge_self}`                                                                                                                     | 无                             |
+| `error.utterance.too_many`, `error.speaker.name_too_long`                                                                                                                                                                                                                                                | `max`：number                  |
+| `error.frame.{disabled,no_live,captured_at_invalid,not_found,format_invalid,image_invalid,empty,save_failed}`                                                                                                                                                                                            | 无                             |
+| `error.frame.side_too_large`                                                                                                                                                                                                                                                                             | `maxSide`：number              |
+| `error.frame.body_too_large`                                                                                                                                                                                                                                                                             | `maxMB`：number                |
+| `error.frame.time_skew`                                                                                                                                                                                                                                                                                  | `maxSecs`：number              |
+| `error.task.{not_found,disabled,artifact_not_found}`, `error.report.{live,no_model,running,not_found,not_ready}`, `error.export.format_invalid`                                                                                                                                                          | 无                             |
+| `task.event.{started,succeeded,failed,cancelled,unknown}`, `task.result.fallback`                                                                                                                                                                                                                        | 无                             |
+| `task.tool.search`                                                                                                                                                                                                                                                                                       | `query`：string                |
+| `task.tool.open`                                                                                                                                                                                                                                                                                         | `url`：string                  |
+| `task.tool.call`, `task.mcp.unavailable`                                                                                                                                                                                                                                                                 | `name`：string                 |
+| `task.tool.result`                                                                                                                                                                                                                                                                                       | `chars`：number                |
+| `task.tool.{empty,error,code_timeout}`, `task.sandbox.{exec,input,write,image,exec_done,input_done,write_done,image_done,unavailable}`                                                                                                                                                                   | 无                             |
+| `task.failure.timeout`                                                                                                                                                                                                                                                                                   | `minutes`：number              |
+| `task.failure.turn_limit`                                                                                                                                                                                                                                                                                | `maxTurns`：number             |
+| `task.failure.remote_status`                                                                                                                                                                                                                                                                             | `status`：number，100–599 整数 |
+| `task.failure.{cancelled,shutdown,restart,disabled,not_configured,dependency,auth,connection,runtime,unknown}`                                                                                                                                                                                           | 无                             |
+| `report.failure.{timeout,interrupted,no_model,no_transcript,session_missing,unknown}`                                                                                                                                                                                                                    | 无                             |
+
+max、position、maxSide 为 1–1,000,000 的整数；maxMB 为 0–1,000,000 的整数
+（现有字节上限取整后可能为零）；maxSecs 为 (0, 1,000,000] 内有限数。
+minutes/maxTurns 为 1–1,000,000 的整数；chars 为 0–1,000,000,000 的整数。
+查询词/URL/工具与服务名字片段为非空字符串，最多 61 个 Unicode 字符
+（沿用 60 字截断加可选省略号），发送端先合并空白。
+这些仅为显示校验边界，不改变配置的实际接纳上限，发送端使用已有真实上限。
+数值按界面语言格式化；maxSecs 显示为四舍五入的整秒，保留原说明语义。
+HTTP 状态退路使用 `Response.status`，不信任响应体给出的状态值。
+登录限流显示由 `Retry-After` 得出有界正整数分钟，无效时显示通用重试说明。
+LLM/TTS 原因仅分为认证拒绝、未找到、限流、服务端 5xx、超时、连接失败与未知；
+未知异常留在日志中，不插入系统提示。
+
+| 发送端                                                                                                                                                       | 消费端                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `web/app.py` 异常处理/信令校验；`web/sessions_api.py`、`frames_api.py`、`tasks_api.py`、`reports_api.py`、`export.py`；`screen/ingest.py` 图片/时间/保存校验 | `client/src/api.ts` 与 `useMeetingClient.ts` / `useScreenShare.ts` 操作失败路径                |
+| `web/auth.py` 登录与中间件，含直接 JSON 错误                                                                                                                 | `client/src/auth.ts`、`AuthGate.tsx`、`LoginPage.tsx` 与 API 登录失效通知                      |
+| `pipeline/bot.py` 录制、麦克风低音量、坏文字输入、待发送队列与回调适配                                                                                       | `protocol.ts` → `useMeetingClient.ts` → `meetingState.ts` → `AssistantPanel.tsx`               |
+| `diar/__init__.py` 启动降级；`pipeline/session.py` 编号调整；`pipeline/text_input.py` 输入/排队提示；`pipeline/errors.py` LLM/TTS 降级                       | 共用 `notice(level, code, params=None)` 回调与同一浏览器提示路径                               |
+| `asr/stt_service.py` 故障/恢复；`pipeline/recorder.py` 运行时说话人区分失败                                                                                  | 同一浏览器提示路径                                                                             |
+| `agent/runner.py` 自有进度模板、沙箱/MCP 降级与受控 RunnerError 分支；`agent/tasks.py` 状态/超时/取消/重启/停止/完成                                         | 持久化任务事件投影 → HTTP list/detail/cancel 与 RTVI task/task_event → 任务 state 与 TaskPanel |
+| `pipeline/report.py` 已知失败/取消/恢复分支 → `reports.error_message_json`；`web/reports_api.py`                                                             | 报告 HTTP error_message → report state 与 ReportPanel，页面/服务重载后保留                     |
+| 客户端设备/传输错误、本地文字校验、浏览器能力限制与画面采集失败                                                                                              | 结构化本地提示状态，渲染时翻译                                                                 |
+
+回调的参数映射采用与网络消息相同的数值类型与校验。连接就绪前保存 level/code/params，
+就绪后再发送；节流、FIFO、恢复、录制 ready 与故障隔离语义保持。
+记录器积压/存储日志不变为新提示。全部界面文案消费端包括 TSX 面板、登录与控制页、
+纯 TypeScript 显示函数、文档 title/lang、tooltip 与 ARIA 标签。
+
+**任务/报告来源与持久化。** 消息引用是 `{"code": "…", "params": {…}}`。
+新系统任务事件保留既有中文 summary 与已有 payload，在 payload.message 加入由管理器/运行器
+自有分支生成的保留消息引用（§8.3）。终态 status 事件还保存 payload.task_status、payload.task_finished_at，
+必要时保存 payload.error_message 或 payload.brief_message（解析器的固定 fallback brief）。
+工具原始参数/输出不能提供这些保留字段。HTTP 事件对象与 RTVI task_event 增加事件 id，只投影校验过的
+message、error_message、brief_message 及可选原始 diagnostic，不发送整份 payload/arguments。
+HTTP list/detail/cancel 与 RTVI task 额外投影可空的 error_message、brief_message、last_event。
+last_event 为 null 或与 HTTP 详情相同的事件投影：
+`{"id": <整数>, "at": <Unix 秒>, "kind": <事件类型>, "summary": <原文>, "message"?: <引用>, "error_message"?: <引用>, "brief_message"?: <引用>, "diagnostic"?: <原文>}`。
+例如新工具结果保留 summary，并携带 `message={"code":"task.tool.result","params":{"chars":320}}`。
+终态原因只在所记录 status/完成时间与当前任务吻合时采用，按事件 id 选最新可信终态，
+不按兼容 summary 或仅按墙上时间猜测。终态元数据先持久化，再 announce 更新后的任务，
+使首次 RTVI task 就具有与 HTTP 重载相同的 error_message/brief_message。
+若事件写入失败，保留已有状态/error 更新并使用本地通用退路，录制/字幕继续。
+来源缺失或损坏时显示本地状态退路。
+客户端将最近事件引用与原 summary 一起保存在 state，不缓存翻译后的 lastStep；
+同一投影在 HTTP 重载后恢复卡片/详情，不把当前语言文本写回存储。
+
+任务失败可信来源是管理器的超时/取消/停止/重启，以及运行器明确的配置/依赖/认证/连接/
+HTTP 状态/步数上限/运行失败分支。code 来自分支或携带类型化引用的 RunnerError，绝不匹配 error 文本。
+注入的通用/未知运行器失败使用 task.failure.unknown。启动恢复只为既有恢复操作刚转换的未完成任务
+新增元数据，不回填历史已完成任务或事件。
+
+报告仅新增可空的 error_message_json TEXT 列（§2.5），存放校验过的消息引用。
+Store 沿用既有加列迁移：缺列才新增，不改旧 error/text_md，旧终态报告保留 NULL，重复打开同一数据库幂等。
+坏 JSON、未知 code 或坏参数安全投影为 null（不能把 JSON 作为文本显示），客户端用本地通用原因。
+Report.error_message 将有效 JSON 变为可空引用，GET report 增加 error_message，保留全部既有响应字段。
+ReportWorker 在自己的超时、已知不可用/无发言/会议缺失分支、取消/停止或未完成报告启动恢复时
+提供引用；外部未知失败使用 report.failure.unknown，原 error 单独保留为诊断。
+元数据与原 error 在既有受保护的失败写入中一起提交：session/id/write_token、running 状态、
+删除/待删除门闩、完成时间与保留策略保持。成功完成同时清除 error 与消息元数据。
+过期身份不能覆写旧报告；启动恢复只标注本来就从 running 转换的行，不改旧终态行。
+不把 marker 塞进 error、不用 sidecar、不建立泛化 metadata store、不猜测或翻译历史文本。
+JSON/Markdown/ZIP 导出保持原格式与原文，不增加报告消息元数据。
+
+新客户端把可信系统引用作为主要状态/原因呈现，包括已知超时与中断。
+兼容 summary/error/brief 保留给旧客户端和导出；受控模板不再作为未翻译诊断重复显示。
+外部诊断是独立原始内容：unknown/runtime 失败将既有 error 放在本地化诊断标签下；
+沙箱/MCP note 可在受控提示之外单独带有界原始诊断。历史事件/报告无来源时显示本地状态标签，
+另行标注原 summary/error，不猜语言。坏引用显示通用本地化系统标签并保留安全原内容，
+解析不得中断字幕；切换 UI 语言时重译 state 中所有已有引用。
+各字段限制自己的 code 家族：事件 message 限 task.event/tool/sandbox/mcp；error_message 分别限
+所属对象的 task.failure 或 report.failure；brief_message 只接受 task.result.fallback。
+可选 diagnostic 最多 200 个 Unicode 字符，只作为纯文本，不参与插值或来源判断。
+
+界面支持 zh-CN 与 en。自动选择按 `navigator.languages` 的偏好顺序匹配
+（没有列表时用 `navigator.language`）：忽略大小写，zh/zh-* 归中文，en/en-* 归英文，
+跳过不支持的项；空列表或全部不支持时归中文。
+显式选择覆盖浏览器变化，用本地 `agentic-meeting.ui-language` 保存 zh-CN 或 en；
+选择自动时删除该值并立即重新匹配当前浏览器偏好。
+无效保存值视为自动；storage 读/写/删除失败不妨碍当前页面切换。
+自动模式响应 languagechange。翻译 Provider 包裹认证 Gate，使 document 语言/title、
+登录页和会议界面一起更新。index.html 的模块启动前/构建加载失败兜底也从同一 catalog 翻译，
+复用既有 transformIndexHtml 构建注入与 ES5 可解析脚本，不能依赖 React/Provider 启动。
+其自动/手动匹配沿用同一浏览器/storage 规则，不另行维护一套字典。
+
+catalog 使用点分命名空间与命名标量插值，声明 string/number 参数类型。
+两种语言须具有完全相同的键和 placeholder，参数声明须与 placeholder 对应；CI 不通过不一致项。
+坏插值使用本地化通用说明，不显示原始键或未填 placeholder；值只作为文本，不能执行 markup。
+本地 UI 可插值用户名字/标题等字符串，但网络 code 仍限于上述注册键。
+
+日期与数字使用 Intl，保持浏览器本地时区语义。各时长显示保留自己的精度与零值规则，
+仅本地化数字和单位：
+
+- 会话时长（sessionView.formatDuration）整分钟向下取整：不足 60 秒显示不到一分钟，
+  之后显示分钟或小时加两位剩余分钟。
+- 任务用时（tasks.taskDuration）按秒四舍五入，负值归零；不足 60 秒显示秒，之后显示累计分钟
+  加两位剩余秒，即使超过一小时也保持累计分钟。开始/完成时间缺失时仍为空串。
+- 中断时长（resume.formatSpan）按秒四舍五入、负值归零；不足 60 秒显示秒，
+  不足一小时显示整分钟，之后显示小时加两位剩余分钟。零值显示零秒，59 秒仍是 59 秒。
+- 字幕/截图时间轴标签保留按秒向下取整与 m:ss/h:mm:ss/HH:MM:SS 格式，墙上时刻保留秒。
+  无效/非有限输入显示本地化占位，不改数值时间轴或对时计算。
+
+基础的会话时长函数不要求任务/中断复用，不引入通用 formatter。
+原始 epoch 秒、连接跨度、Clock 与存储时间不变。UI 语言独立于会议语言：字幕、姓名
+（包括已存默认说话人名字）、标题、用户/模型 goal/brief、detail_md、报告 text_md
+（含生成的文档标题）、截图摘要及外部诊断保留原始产物/内容文本。
+有明确来源的系统进度/失败模板按上述引用本地化。不猜名字、不改写历史内容，
+唯一 schema 增量为可空的报告消息来源。CLI 与日志保持既有语言。
+
 ## 6. 数据通道消息
 
 ### 6.1 服务端 → 浏览器
@@ -1090,24 +1264,25 @@ age 均为 `null`；关闭的画面摘要队列深度已知为 0，启用但资�
 服务端向管线推 `RTVIServerMessageFrame(data=<下面的对象>)`；浏览器在 `onServerMessage` 回调里收到。
 每条消息都有 `type` 字段：
 
-| `type`             | 其余字段                                                                  | 含义                                                                                                                                                                                     |
-| ------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `caption`          | `segment_id, speaker_idx, speaker_name, t_start, stable, unstable`        | 当前正在说的这一段的实时字幕；同一 `segment_id` 的后一条覆盖前一条                                                                                                                       |
-| `utterance`        | `id, segment_id, speaker_idx, speaker_name, t_start, t_end, text, source` | 一条发言已定稿落库；界面用它替换对应 `segment_id` 的实时字幕。`id` 是界面上已有的发言时，表示新片段并进了那一条（§4.3 第 7 条）：`text` 是并好的全文，`segment_id` 那行实时字幕收掉      |
-| `utterance_update` | `id, speaker_idx, speaker_name`                                           | 说话人更正                                                                                                                                                                               |
-| `speaker`          | `idx, display_name`                                                       | 说话人改名                                                                                                                                                                               |
-| `speakers_merged`  | `from, into, display_name`                                                | 说话人 `from` 并入了 `into`（`display_name` 是 `into` 的显示名）：页面把已加载的发言改到 `into` 名下，并从说话人列表里去掉 `from`                                                        |
-| `frame`            | `id, t, width, height`                                                    | 新截图                                                                                                                                                                                   |
-| `frame_caption`    | `id, caption`                                                             | 截图摘要已生成                                                                                                                                                                           |
-| `assistant_state`  | `state`：`idle` / `listening` / `thinking` / `speaking`                   | 助理状态                                                                                                                                                                                 |
-| `task`             | `id, label, goal, status, brief, error, modality, created_at`             | 任务创建或状态变化（`id` 是完整编号，`label` 是会议内的短编号 `t3`）                                                                                                                     |
-| `task_event`       | `task_id, at, kind, summary`                                              | 任务进度                                                                                                                                                                                 |
-| `notice`           | `level`：`info` / `warn` / `error`，`text`                                | 需要让用户知道的提示（如某服务不可用）。实时模型、语音合成的请求出错时，服务端把管线里的错误换成一句中文发出来（`pipeline/errors.py`）；Pipecat 自带的 RTVI `error` 消息页面只显示致命的 |
-| `session`          | `id, title, keep, started_at, resumed, base_secs, state`                  | 连接建立后发一次：所属会话与当前保留标记；`resumed` 表示继续；`base_secs` 是本次连接的时间轴起点                                                                                         |
-| `session_closed`   | `reason`：`taken_over` / `ended` / `server_stopping`                      | 连接即将被服务端关闭的原因（尽力而为地发出），页面据此提示而不是静默变成未连接                                                                                                           |
+| `type`             | 其余字段                                                                                                       | 含义                                                                                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `caption`          | `segment_id, speaker_idx, speaker_name, t_start, stable, unstable`                                             | 当前正在说的这一段的实时字幕；同一 `segment_id` 的后一条覆盖前一条                                                                                                                  |
+| `utterance`        | `id, segment_id, speaker_idx, speaker_name, t_start, t_end, text, source`                                      | 一条发言已定稿落库；界面用它替换对应 `segment_id` 的实时字幕。`id` 是界面上已有的发言时，表示新片段并进了那一条（§4.3 第 7 条）：`text` 是并好的全文，`segment_id` 那行实时字幕收掉 |
+| `utterance_update` | `id, speaker_idx, speaker_name`                                                                                | 说话人更正                                                                                                                                                                          |
+| `speaker`          | `idx, display_name`                                                                                            | 说话人改名                                                                                                                                                                          |
+| `speakers_merged`  | `from, into, display_name`                                                                                     | 说话人 `from` 并入了 `into`（`display_name` 是 `into` 的显示名）：页面把已加载的发言改到 `into` 名下，并从说话人列表里去掉 `from`                                                   |
+| `frame`            | `id, t, width, height`                                                                                         | 新截图                                                                                                                                                                              |
+| `frame_caption`    | `id, caption`                                                                                                  | 截图摘要已生成                                                                                                                                                                      |
+| `assistant_state`  | `state`：`idle` / `listening` / `thinking` / `speaking`                                                        | 助理状态                                                                                                                                                                            |
+| `task`             | `id, label, goal, status, brief, error, modality, created_at`，可选 `error_message, brief_message, last_event` | 任务创建或状态变化（`id` 是完整编号，`label` 是会议内的短编号 `t3`）                                                                                                                |
+| `task_event`       | `task_id, id, at, kind, summary`，可选 `message, error_message, brief_message, diagnostic`                     | 任务进度                                                                                                                                                                            |
+| `notice`           | `level`：`info` / `warn` / `error`，`code, params, text`                                                       | 需要让用户知道的提示（如某服务不可用）。结构化系统消息在渲染时翻译（§5.9）；实时模型/TTS 错误经 `pipeline/errors.py` 变为提示。原生 RTVI 错误只显示致命失败                         |
+| `session`          | `id, title, keep, started_at, resumed, base_secs, state`                                                       | 连接建立后发一次：所属会话与当前保留标记；`resumed` 表示继续；`base_secs` 是本次连接的时间轴起点                                                                                    |
+| `session_closed`   | `reason`：`taken_over` / `ended` / `server_stopping`                                                           | 连接即将被服务端关闭的原因（尽力而为地发出），页面据此提示而不是静默变成未连接                                                                                                      |
 
 发送连接就绪消息时，从当前持久状态读取 `session.keep`。`session.recording_notice=true` 时，
-每次连接就绪后在 session 消息之后发送一次现有 `notice`：`level="info"`，
+每次连接就绪后在 session 消息之后发送一次 `notice`：`level="info"`，
+`code="notice.recording"`、`params={}`，并保留兼容
 `text="会议正在转录，发言和共享画面会保存在服务器上"`。新会议与手动继续发送；
 同一路连接重复触发 ready 不重复发送。关闭配置只抑制此提示。锁定 SDK 自动重连不再次触发 RTVI
 client-ready（[pipecat-notes.md](pipecat-notes.md) §12），因此通过既有传输/HTTP 同步恢复状态，
@@ -1308,7 +1483,12 @@ agent 的最终回答必须是如下 JSON 对象（由 agent 的系统提示词�
 
 ### 8.3 进度事件
 
-运行器把 agent 框架的流式事件转换成一句中文的 `summary`，可以直接朗读：
+运行器把 agent 框架的流式事件转换成可直接朗读的中文兼容 summary，同时明确附带系统引用（§5.9）。
+浏览器在渲染时翻译引用，不读取历史 summary 猜测模板。
+task_events.payload_json 保留既有详情，增加保留字段 message、可选 error_message/brief_message/diagnostic；
+终态来源还记录任务 status/finished_at。HTTP/RTVI 只投影校验过的显示字段，下表示例仍为原兼容 summary。
+未知外部/注入事件保留原内容；坏引用显示本地化通用进度。
+查询词/工具名采用截断纯文本插值，异常诊断作为独立内容。
 
 | 事件          | `kind`        | `summary` 示例                 |
 | ------------- | ------------- | ------------------------------ |
