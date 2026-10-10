@@ -162,7 +162,7 @@ async def seed_localization(store: Store) -> dict[str, Any]:
                 if name == "fallback":
                     payload["brief_message"] = {"code": "task.result.fallback", "params": {}}
                 await store.add_task_event(
-                    task.id, status, "原始兼容终态文案", payload, now=finished_at
+                    task.id, "status", "原始兼容终态文案", payload, now=finished_at
                 )
         else:
             await store.add_task_event(task.id, "failed", "历史原始进度", now=clock)
