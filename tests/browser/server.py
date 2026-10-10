@@ -104,6 +104,8 @@ async def seed_localization(store: Store) -> dict[str, Any]:
     """通过真实 Store 保存可信来源和历史原文，HTTP 仍走生产投影。"""
     clock = 1_700_000_000.0
     session = await store.create_session("语言测试原始会议", now=clock)
+    connection = await store.open_connection(session.id, connected_at=clock, t_from=0)
+    await store.close_connection(connection, disconnected_at=clock + 3601, t_to=3601)
     await store.end_session(session.id, now=clock + 3601)
     await store.add_utterance(Utterance(session.id, 1, 0, 1, "原始中文字幕不翻译"))
     await store.rename_speaker(session.id, 1, "原始中文姓名")
@@ -190,8 +192,22 @@ async def seed_localization(store: Store) -> dict[str, Any]:
         reports[status] = report_id
         report_sessions[status] = report_session.id
     under = await store.create_session("短于一分钟", now=clock + 100)
+    connection = await store.open_connection(under.id, connected_at=clock + 100, t_from=0)
+    await store.close_connection(connection, disconnected_at=clock + 159, t_to=59)
     await store.end_session(under.id, now=clock + 159)
-    interrupted = await store.create_session("中断五十九秒", now=time.time() - 59)
+    wall = time.time() - 100
+    interrupted = await store.create_session("中断五十九秒", now=wall)
+    for connected_at, disconnected_at, t_from, t_to in (
+        (wall, wall + 10, 0, 10),
+        (wall + 69, wall + 79, 69, 79),
+    ):
+        connection = await store.open_connection(
+            interrupted.id, connected_at=connected_at, t_from=t_from
+        )
+        await store.close_connection(connection, disconnected_at=disconnected_at, t_to=t_to)
+        await store.add_utterance(
+            Utterance(interrupted.id, 1, t_from, t_from + 1, f"跨中断原始字幕 {t_from}")
+        )
     return {
         "session": session.id,
         "tasks": tasks,
