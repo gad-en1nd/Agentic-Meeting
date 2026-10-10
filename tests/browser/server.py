@@ -167,7 +167,7 @@ async def seed_localization(store: Store) -> dict[str, Any]:
                     task.id, "status", "原始兼容终态文案", payload, now=finished_at
                 )
         else:
-            await store.add_task_event(task.id, "failed", "历史原始进度", now=clock)
+            await store.add_task_event(task.id, "status", "历史原始进度", now=clock)
         tasks[name] = task.id
     reports, report_sessions = {}, {}
     for index, status in enumerate(("failed", "running", "done", "legacy"), 1):
