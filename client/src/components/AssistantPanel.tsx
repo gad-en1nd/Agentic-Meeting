@@ -1,17 +1,18 @@
+import { useI18n } from "../I18nProvider.tsx";
 import type { Notice, ReplyMode } from "../meetingState.ts";
 import type { AssistantStateName } from "../protocol.ts";
 import { TextInput } from "./TextInput.tsx";
 
 const STATE_LABELS: Record<AssistantStateName, string> = {
-  idle: "待命",
-  listening: "在听",
-  thinking: "思考中",
-  speaking: "朗读中",
+  idle: "ui.assistant.idle",
+  listening: "ui.assistant.listening",
+  thinking: "ui.assistant.thinking",
+  speaking: "ui.assistant.speaking",
 };
 
 const REPLY_LABELS: Record<ReplyMode, string> = {
-  text: "文字回答",
-  voice: "语音回答",
+  text: "ui.reply.text",
+  voice: "ui.reply.voice",
 };
 
 interface Props {
@@ -35,28 +36,37 @@ export function AssistantPanel({
   onSend,
   onDismissNotice,
 }: Props) {
+  const { t } = useI18n();
   return (
-    <section className="panel assistant-panel" aria-label="助理">
+    <section className="panel assistant-panel" aria-label={t("ui.assistant.label")}>
       <h2>
-        助理 <span className={`badge badge-${state}`}>{STATE_LABELS[state]}</span>
-        {text && replyMode && <span className="reply-mode">{REPLY_LABELS[replyMode]}</span>}
+        {t("ui.assistant.label")}{" "}
+        <span className={`badge badge-${state}`}>{t(STATE_LABELS[state])}</span>
+        {text && replyMode && <span className="reply-mode">{t(REPLY_LABELS[replyMode])}</span>}
       </h2>
       <ul className="notices">
         {notices.map((notice) => (
           <li key={notice.id} className={`notice notice-${notice.level}`}>
-            <span>{notice.text}</span>
-            <button type="button" aria-label="关闭提示" onClick={() => onDismissNotice(notice.id)}>
+            <span>
+              {notice.cause
+                ? t("ui.error.operation", {
+                    operation: t(notice.message.code, notice.message.params),
+                    reason: t(notice.cause.code, notice.cause.params),
+                  })
+                : t(notice.message.code, notice.message.params)}
+            </span>
+            <button
+              type="button"
+              aria-label={t("ui.notice.dismiss")}
+              onClick={() => onDismissNotice(notice.id)}
+            >
               ×
             </button>
           </li>
         ))}
       </ul>
       <div className="reply">
-        {text ? (
-          <p>{text}</p>
-        ) : (
-          <p className="empty">叫一声助理的名字，或在下面打字提问，它的回答会显示在这里。</p>
-        )}
+        {text ? <p>{text}</p> : <p className="empty">{t("ui.assistant.empty")}</p>}
       </div>
       <TextInput enabled={canSend} onSend={onSend} />
     </section>

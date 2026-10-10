@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useState } from "react";
 
 import { MAX_TEXT_CHARS, keyAction, remainingChars } from "../textInput.ts";
@@ -11,6 +12,7 @@ interface Props {
 
 /** 文字输入框：不方便出声时打字向助理提问或委托任务。回车发送，Shift+回车换行；助理只用文字回答，不会出声。 */
 export function TextInput({ enabled, onSend }: Props) {
+  const { t } = useI18n();
   const [text, setText] = useState("");
   const left = remainingChars(text);
 
@@ -27,12 +29,8 @@ export function TextInput({ enabled, onSend }: Props) {
       }}
     >
       <textarea
-        aria-label="给助理发文字消息"
-        placeholder={
-          enabled
-            ? "打字提问，助理只回文字。回车发送，Shift+回车换行。"
-            : "开始会议后，可以在这里打字向助理提问。"
-        }
+        aria-label={t("ui.input.label")}
+        placeholder={t(enabled ? "ui.input.active" : "ui.input.idle")}
         value={text}
         rows={2}
         disabled={!enabled}
@@ -53,11 +51,11 @@ export function TextInput({ enabled, onSend }: Props) {
       <div className="text-input-row">
         {left !== null && (
           <span className={left < 0 ? "text-input-over" : "text-input-left"}>
-            {left >= 0 ? `还能输入 ${left} 字` : `超出 ${-left} 字`}
+            {t(left >= 0 ? "ui.input.remaining" : "ui.input.over", { count: Math.abs(left) })}
           </span>
         )}
         <button type="submit" className="button button-start" disabled={!enabled || !text.trim()}>
-          发送
+          {t("ui.input.send")}
         </button>
       </div>
     </form>

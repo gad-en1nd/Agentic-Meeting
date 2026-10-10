@@ -1,5 +1,8 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useState, type FormEvent } from "react";
 
+import type { MessageRef } from "../i18n.ts";
+import { LanguageSelector } from "./LanguageSelector.tsx";
 import { login, type AuthStatus } from "../auth.ts";
 
 interface Props {
@@ -10,8 +13,9 @@ interface Props {
 
 /** 访问口令的登录页（docs/interfaces.md §5.7）。 */
 export function LoginPage({ overlay = false, onLoggedIn }: Props) {
+  const { t } = useI18n();
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<MessageRef | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
@@ -32,11 +36,10 @@ export function LoginPage({ overlay = false, onLoggedIn }: Props) {
   return (
     <div className={overlay ? "login login-overlay" : "login"}>
       <form className="login-card" onSubmit={(event) => void submit(event)}>
-        <h1>组会助理</h1>
-        <p className="login-hint">
-          {overlay ? "登录已过期，请重新输入访问口令。会议不受影响。" : "请输入访问口令。"}
-        </p>
-        <label htmlFor="login-password">访问口令</label>
+        <h1>{t("app.title")}</h1>
+        <LanguageSelector />
+        <p className="login-hint">{t(overlay ? "ui.auth.expired" : "ui.auth.prompt")}</p>
+        <label htmlFor="login-password">{t("ui.auth.password")}</label>
         <input
           id="login-password"
           type="password"
@@ -49,11 +52,11 @@ export function LoginPage({ overlay = false, onLoggedIn }: Props) {
         />
         {error && (
           <p id="login-error" className="login-error" role="alert">
-            {error}
+            {t(error.code, error.params)}
           </p>
         )}
         <button type="submit" className="button button-start" disabled={busy || !password}>
-          {busy ? "登录中…" : "登录"}
+          {t(busy ? "ui.auth.busy" : "ui.auth.login")}
         </button>
       </form>
     </div>

@@ -1,3 +1,5 @@
+import type { MessageRef } from "./i18n.ts";
+import type { TaskEventItem } from "./tasks.ts";
 import type { ConnectionSpan, SessionDetail, SessionSummary, SpeakerInfo } from "./api.ts";
 import {
   appendHistory,
@@ -39,7 +41,8 @@ export type ConnectionState = "disconnected" | "connecting" | "connected" | "err
 export interface Notice {
   id: number;
   level: NoticeLevel;
-  text: string;
+  message: MessageRef;
+  cause?: MessageRef;
 }
 
 export interface MeetingState {
@@ -134,7 +137,7 @@ export type Action =
   | { type: "textSent" }
   | { type: "llmStarted" }
   | { type: "llmText"; text: string }
-  | { type: "notice"; level: NoticeLevel; text: string }
+  | { type: "notice"; level: NoticeLevel; message: MessageRef; cause?: MessageRef }
   | { type: "dismissNotice"; id: number }
   | { type: "sessionsLoaded"; items: SessionSummary[] }
   | {
@@ -154,7 +157,7 @@ export type Action =
   | { type: "framesLoaded"; sessionId: string; items: FrameItem[]; merge: boolean }
   | { type: "sharing"; sharing: boolean }
   | { type: "task"; task: TaskItem }
-  | { type: "taskEvent"; taskId: string; summary: string }
+  | { type: "taskEvent"; taskId: string; event: TaskEventItem }
   | { type: "tasksLoaded"; sessionId: string; items: TaskItem[] };
 
 /** SDK 的传输层状态 → 界面上的连接状态。"ready" 才是服务端的管线已经就绪。 */
@@ -174,14 +177,18 @@ export function connectionOf(transport: string): ConnectionState {
 }
 
 export const SESSION_CLOSED_TEXT: Record<SessionClosedMessage["reason"], string> = {
-  taken_over:
-    "已在另一台设备（或另一个页面）上继续这场会议，这个页面已断开。同一时刻只能有一路连接。",
-  ended: "会议已结束。",
-  server_stopping: "服务端正在停止，连接已断开；它重新起来之后会自动接着开这场会议。",
+  taken_over: "ui.session.closedTakenOver",
+  ended: "ui.session.closedEnded",
+  server_stopping: "ui.session.closedStopping",
 };
 
-function pushNotice(state: MeetingState, level: NoticeLevel, text: string): MeetingState {
-  const notice: Notice = { id: state.nextNoticeId, level, text };
+function pushNotice(
+  state: MeetingState,
+  level: NoticeLevel,
+  message: MessageRef,
+  cause?: MessageRef,
+): MeetingState {
+  const notice: Notice = { id: state.nextNoticeId, level, message, cause };
   return {
     ...state,
     notices: [...state.notices, notice].slice(-MAX_NOTICES),
@@ -319,7 +326,7 @@ export function reduce(state: MeetingState, action: Action): MeetingState {
     }
     case "sessionClosed":
       return {
-        ...pushNotice(state, "warn", SESSION_CLOSED_TEXT[action.message.reason]),
+        ...pushNotice(state, "warn", { code: SESSION_CLOSED_TEXT[action.message.reason] }),
         closedReason: action.message.reason,
         liveSessionId: null,
         sharing: false,
@@ -339,7 +346,7 @@ export function reduce(state: MeetingState, action: Action): MeetingState {
     case "llmText":
       return { ...state, assistantText: state.assistantText + action.text };
     case "notice":
-      return pushNotice(state, action.level, action.text);
+      return pushNotice(state, action.level, action.message, action.cause);
     case "dismissNotice":
       return { ...state, notices: state.notices.filter((n) => n.id !== action.id) };
     case "sessionsLoaded": {
@@ -431,7 +438,7 @@ export function reduce(state: MeetingState, action: Action): MeetingState {
       if (state.viewing && !action.task.id.startsWith(`${state.viewing.id}.`)) return state;
       return { ...state, tasks: applyTask(state.tasks, action.task) };
     case "taskEvent":
-      return { ...state, tasks: applyTaskEvent(state.tasks, action.taskId, action.summary) };
+      return { ...state, tasks: applyTaskEvent(state.tasks, action.taskId, action.event) };
     case "tasksLoaded":
       if (state.viewing?.id !== action.sessionId || state.viewing.deletion_pending) return state; // 取回来时已经切到别的会议了
       return { ...state, tasks: replaceTasks(state.tasks, action.items) };

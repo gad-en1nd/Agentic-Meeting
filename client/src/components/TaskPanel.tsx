@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useEffect, useState } from "react";
 
 import { formatFrameTime, frameImageUrl } from "../screenCapture.ts";
@@ -8,6 +9,10 @@ import {
   isImageArtifact,
   safeLink,
   taskDuration,
+  taskBrief,
+  taskFailure,
+  taskDiagnostic,
+  eventDiagnostic,
   taskSubline,
   type TaskDetail,
   type TaskItem,
@@ -21,6 +26,7 @@ interface Props {
 
 /** 后台任务面板：列表（状态、最近一步或结论），点开看详细结果、来源、产物、进度，以及这次任务外发了什么。 */
 export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
+  const { locale, t } = useI18n();
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const open = openId === null ? null : (tasks.find((t) => t.id === openId) ?? null);
@@ -53,8 +59,8 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
   if (tasks.length === 0) return null; // 没有交办过任务时不占地方
 
   return (
-    <section className="panel tasks-panel" aria-label="后台任务">
-      <h2>后台任务</h2>
+    <section className="panel tasks-panel" aria-label={t("ui.task.label")}>
+      <h2>{t("ui.task.label")}</h2>
       <ul className="tasks">
         {[...tasks].reverse().map((task) => (
           <li key={task.id}>
@@ -62,12 +68,17 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
               <span className="task-head">
                 <span className="task-label">{task.label}</span>
                 <span className={`badge badge-task-${task.status}`}>
-                  {TASK_STATUS_LABELS[task.status]}
+                  {t(TASK_STATUS_LABELS[task.status])}
                 </span>
-                {task.modality === "text" && <span className="tag">文字</span>}
+                {task.modality === "text" && <span className="tag">{t("ui.textTag")}</span>}
               </span>
               <span className="task-goal">{task.goal}</span>
-              <span className="task-sub">{taskSubline(task)}</span>
+              <span className="task-sub">{taskSubline(task, locale)}</span>
+              {task.status === "running" && task.last_event && eventDiagnostic(task.last_event) && (
+                <span className="task-sub">
+                  {t("ui.diagnostic", { text: eventDiagnostic(task.last_event)! })}
+                </span>
+              )}
             </button>
           </li>
         ))}
@@ -77,7 +88,7 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
           className="lightbox"
           role="dialog"
           aria-modal="true"
-          aria-label={`任务 ${open.label}`}
+          aria-label={t("ui.task.dialog", { label: open.label })}
           onClick={() => setOpenId(null)}
         >
           <article className="task-detail" onClick={(event) => event.stopPropagation()}>
@@ -85,7 +96,7 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
               <h3>
                 {open.label}{" "}
                 <span className={`badge badge-task-${open.status}`}>
-                  {TASK_STATUS_LABELS[open.status]}
+                  {t(TASK_STATUS_LABELS[open.status])}
                 </span>
               </h3>
               <span className="spacer" />
@@ -95,22 +106,27 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
                   className="link link-danger"
                   onClick={() => onCancel(open.id)}
                 >
-                  取消任务
+                  {t("ui.task.cancel")}
                 </button>
               )}
               <button type="button" className="link" onClick={() => setOpenId(null)}>
-                关闭
+                {t("ui.close")}
               </button>
             </header>
             <p className="task-detail-goal">{open.goal}</p>
-            {open.status === "succeeded" && open.brief && (
-              <p className="task-detail-brief">{open.brief}</p>
+            {open.status === "succeeded" && (open.brief || open.brief_message) && (
+              <p className="task-detail-brief">{taskBrief(open, locale)}</p>
             )}
-            {(open.status === "failed" || open.status === "cancelled") && open.error && (
-              <p className="notice notice-error">{open.error}</p>
+            {(open.status === "failed" || open.status === "cancelled") && (
+              <div>
+                <p className="notice notice-error">{taskFailure(open, locale)}</p>
+                {taskDiagnostic(open) && (
+                  <p>{t("ui.diagnostic", { text: taskDiagnostic(open)! })}</p>
+                )}
+              </div>
             )}
             {detail === null || detail.id !== open.id ? (
-              <p className="empty">正在读取…</p>
+              <p className="empty">{t("ui.task.loading")}</p>
             ) : (
               <TaskBody detail={detail} />
             )}
@@ -122,14 +138,15 @@ export function TaskPanel({ tasks, onLoad, onCancel }: Props) {
 }
 
 function TaskBody({ detail }: { detail: TaskDetail }) {
-  const duration = taskDuration(detail.started_at, detail.finished_at);
+  const { locale, t } = useI18n();
+  const duration = taskDuration(detail.started_at, detail.finished_at, locale);
   const images = detail.artifacts.filter(isImageArtifact);
   const files = detail.artifacts.filter((name) => !isImageArtifact(name));
   return (
     <>
       {detail.detail_md && (
         <>
-          <h4>详细结果</h4>
+          <h4>{t("ui.task.detail")}</h4>
           {/* 远端模型写的内容按纯文字显示，不当 HTML 解释 */}
           <pre className="task-markdown">{detail.detail_md}</pre>
         </>
@@ -145,7 +162,7 @@ function TaskBody({ detail }: { detail: TaskDetail }) {
       )}
       {files.length > 0 && (
         <>
-          <h4>产物文件</h4>
+          <h4>{t("ui.task.artifacts")}</h4>
           <ul className="task-list">
             {files.map((name) => (
               <li key={name}>
@@ -159,7 +176,7 @@ function TaskBody({ detail }: { detail: TaskDetail }) {
       )}
       {detail.sources.length > 0 && (
         <>
-          <h4>来源</h4>
+          <h4>{t("ui.task.sources")}</h4>
           <ul className="task-list">
             {detail.sources.map((source) => {
               const href = safeLink(source);
@@ -178,25 +195,36 @@ function TaskBody({ detail }: { detail: TaskDetail }) {
           </ul>
         </>
       )}
-      <h4>进度{duration && `（用时 ${duration}）`}</h4>
+      <h4>{duration ? t("ui.task.progressDuration", { duration }) : t("ui.task.progress")}</h4>
       <ol className="task-events">
         {detail.events.map((event, index) => (
           <li key={index} className={`task-event task-event-${event.kind}`}>
-            {event.summary}
+            {t(event.message?.code ?? "task.event.unknown", event.message?.params)}
+            {event.error_message && (
+              <p>{t(event.error_message.code, event.error_message.params)}</p>
+            )}
+            {event.brief_message && (
+              <p>{t(event.brief_message.code, event.brief_message.params)}</p>
+            )}
+            {eventDiagnostic(event) && (
+              <p>{t("ui.diagnostic", { text: eventDiagnostic(event)! })}</p>
+            )}
           </li>
         ))}
       </ol>
-      <h4>这次任务外发的内容</h4>
+      <h4>{t("ui.task.outbound")}</h4>
       <p className="task-outbound">
         {detail.outbound.model_host
-          ? `发给了 ${detail.outbound.model_host} 上的模型：`
-          : "发给了后台模型："}
-        任务目标（上面那段话）、{formatFrameTime(detail.outbound.t_from)} 到{" "}
-        {formatFrameTime(detail.outbound.t_to)} 的会议转录
+          ? t("ui.task.outboundHost", { host: detail.outbound.model_host })
+          : t("ui.task.outboundModel")}
+        {t("ui.task.outboundTranscript", {
+          from: formatFrameTime(detail.outbound.t_from, locale),
+          to: formatFrameTime(detail.outbound.t_to, locale),
+        })}
         {detail.outbound.frames.length > 0
-          ? `，以及下面 ${detail.outbound.frames.length} 张屏幕截图。`
-          : "，没有带屏幕截图。"}
-        {` 交办人：${detail.requested_by}。`}
+          ? t("ui.task.outboundFrames", { count: detail.outbound.frames.length })
+          : t("ui.task.outboundNoFrames")}
+        {t("ui.task.requester", { name: detail.requested_by })}
       </p>
       {detail.outbound.frames.length > 0 && (
         <div className="task-images task-images-small">
@@ -204,7 +232,7 @@ function TaskBody({ detail }: { detail: TaskDetail }) {
             <a key={frame.id} href={frameImageUrl(frame.id)} target="_blank" rel="noreferrer">
               <img
                 src={frameImageUrl(frame.id)}
-                alt={`${formatFrameTime(frame.t)} 的屏幕截图`}
+                alt={t("ui.screen.at", { time: formatFrameTime(frame.t, locale) })}
                 loading="lazy"
               />
             </a>

@@ -1,3 +1,4 @@
+import { translate, type Locale } from "./i18n.ts";
 import type {
   CaptionMessage,
   SpeakerMessage,
@@ -218,11 +219,15 @@ export function firstUtteranceId(lines: readonly CaptionLine[]): number | null {
 }
 
 /** 会话时间轴上的秒数 → "m:ss"，满一小时为 "h:mm:ss"。 */
-export function formatClock(secs: number): string {
+export function formatClock(secs: number, locale: Locale): string {
+  if (!Number.isFinite(secs)) return translate(locale, "format.unavailable");
   const total = Math.max(0, Math.floor(secs));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+  const digits = new Intl.NumberFormat(locale, { useGrouping: false });
+  const ss = digits.format(s).padStart(2, "0");
+  return h > 0
+    ? `${digits.format(h)}:${digits.format(m).padStart(2, "0")}:${ss}`
+    : `${digits.format(m)}:${ss}`;
 }

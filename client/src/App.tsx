@@ -1,3 +1,4 @@
+import { useI18n } from "./I18nProvider.tsx";
 import { PipecatClientProvider } from "@pipecat-ai/client-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function App({ onLogout }: Props = {}) {
+  const { t } = useI18n();
   const meeting = useMeetingClient();
   const { client, state } = meeting;
   const [listOpen, setListOpen] = useState(false);
@@ -48,11 +50,13 @@ export function App({ onLogout }: Props = {}) {
     state.connection === "connecting" ||
     state.reconnectAttempt > 0;
 
-  const emptyText = inMeeting
-    ? "会议已经开始，说的话会实时显示在这里。"
-    : state.viewing
-      ? "这场会议还没有发言记录。"
-      : "点右上角的「开始新会议」，说话的内容会实时显示在这里。";
+  const emptyText = t(
+    inMeeting
+      ? "ui.caption.emptyLive"
+      : state.viewing
+        ? "ui.caption.emptyHistory"
+        : "ui.caption.emptyNew",
+  );
 
   return (
     <PipecatClientProvider client={client}>
@@ -74,7 +78,7 @@ export function App({ onLogout }: Props = {}) {
         />
         {meeting.unsupported && (
           <p className="unsupported" role="alert">
-            {meeting.unsupported}
+            {t(meeting.unsupported.code, meeting.unsupported.params)}
           </p>
         )}
         <AssistantAudio />
@@ -105,7 +109,7 @@ export function App({ onLogout }: Props = {}) {
                 }}
                 onClearSelection={() => setSelected(new Set())}
               />
-              <div className="tabs" role="tablist" aria-label="字幕和报告">
+              <div className="tabs" role="tablist" aria-label={t("ui.tabs.label")}>
                 <button
                   type="button"
                   role="tab"
@@ -113,7 +117,7 @@ export function App({ onLogout }: Props = {}) {
                   className={`tab${tab === "captions" ? " tab-current" : ""}`}
                   onClick={() => setTab("captions")}
                 >
-                  字幕
+                  {t("ui.caption.label")}
                 </button>
                 <button
                   type="button"
@@ -122,9 +126,9 @@ export function App({ onLogout }: Props = {}) {
                   className={`tab${tab === "report" ? " tab-current" : ""}`}
                   onClick={() => setTab("report")}
                 >
-                  报告
+                  {t("ui.report.tab")}
                   {state.report?.status === "running" && (
-                    <span className="tab-dot" aria-label="生成中" />
+                    <span className="tab-dot" aria-label={t("ui.report.generating")} />
                   )}
                 </button>
               </div>

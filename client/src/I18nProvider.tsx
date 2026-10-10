@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { LANGUAGE_STORAGE_KEY, resolveLocale, translate } from "./i18n";
-import type { Locale, LocalePreference, MessageParams } from "./i18n";
+import { LANGUAGE_STORAGE_KEY, resolveLocale, translate } from "./i18n.ts";
+import type { Locale, LocalePreference, MessageParams } from "./i18n.ts";
 
 type I18n = {
   locale: Locale;

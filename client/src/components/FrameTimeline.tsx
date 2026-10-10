@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
@@ -22,8 +23,9 @@ interface Props {
 
 /** 屏幕时间线：截图缩略图（点击放大）和画面摘要；顶部是共享屏幕的开关。 */
 export function FrameTimeline({ frames, timeBase, sharing, canShare, onStart, onStop }: Props) {
+  const { locale, t } = useI18n();
   // 钟点在前（没有时间基准时退回会议时间），会议进行到哪跟在后面
-  const wall = (t: number) => wallClockLabel(t, timeBase) || formatFrameTime(t);
+  const wall = (t: number) => wallClockLabel(t, timeBase, locale) || formatFrameTime(t, locale);
   const [openId, setOpenId] = useState<number | null>(null);
   const strip = useRef<HTMLUListElement>(null);
   const open = openId === null ? null : (frames.find((f) => f.id === openId) ?? null);
@@ -70,26 +72,24 @@ export function FrameTimeline({ frames, timeBase, sharing, canShare, onStart, on
   const latest = frames.length > 0 ? frames[frames.length - 1] : null;
 
   return (
-    <section className="panel frames-panel" aria-label="屏幕">
+    <section className="panel frames-panel" aria-label={t("ui.screen.label")}>
       <h2>
-        屏幕
-        {sharing && <span className="badge badge-speaking">共享中</span>}
+        {t("ui.screen.label")}
+        {sharing && <span className="badge badge-speaking">{t("ui.screen.sharing")}</span>}
         <span className="spacer" />
         {sharing ? (
           <button type="button" className="link" onClick={onStop}>
-            停止共享
+            {t("ui.screen.stop")}
           </button>
         ) : (
           <button type="button" className="link" disabled={!canShare} onClick={onStart}>
-            共享屏幕
+            {t("ui.screen.start")}
           </button>
         )}
       </h2>
       {frames.length === 0 ? (
         <p className="empty">
-          {canShare || sharing
-            ? "共享屏幕后，画面有变化时会自动截图，并出现在这里。"
-            : "会议进行中可以共享屏幕，截图会出现在这里。"}
+          {t(canShare || sharing ? "ui.screen.emptyActive" : "ui.screen.emptyIdle")}
         </p>
       ) : (
         <>
@@ -99,14 +99,19 @@ export function FrameTimeline({ frames, timeBase, sharing, canShare, onStart, on
                 <button
                   type="button"
                   className="frame-thumb"
-                  title={[`会议进行到 ${formatFrameTime(frame.t)}`, frame.caption]
+                  title={[
+                    t("ui.screen.elapsed", { time: formatFrameTime(frame.t, locale) }),
+                    frame.caption,
+                  ]
                     .filter(Boolean)
                     .join(" ")}
                   onClick={() => setOpenId(frame.id)}
                 >
                   <img
                     src={frameImageUrl(frame.id)}
-                    alt={frame.caption ?? `${formatFrameTime(frame.t)} 的屏幕截图`}
+                    alt={
+                      frame.caption ?? t("ui.screen.at", { time: formatFrameTime(frame.t, locale) })
+                    }
                     loading="lazy"
                     width={frame.width}
                     height={frame.height}
@@ -119,7 +124,7 @@ export function FrameTimeline({ frames, timeBase, sharing, canShare, onStart, on
           {latest?.caption && (
             <p className="frame-caption">
               <time>{wall(latest.t)}</time>{" "}
-              <time className="elapsed">{formatFrameTime(latest.t)}</time> {latest.caption}
+              <time className="elapsed">{formatFrameTime(latest.t, locale)}</time> {latest.caption}
             </p>
           )}
         </>
@@ -129,20 +134,23 @@ export function FrameTimeline({ frames, timeBase, sharing, canShare, onStart, on
           className="lightbox"
           role="dialog"
           aria-modal="true"
-          aria-label="屏幕截图"
+          aria-label={t("ui.screen.screenshot")}
           onClick={() => setOpenId(null)}
         >
           <figure onClick={(event) => event.stopPropagation()}>
-            <img src={frameImageUrl(open.id)} alt={open.caption ?? "屏幕截图"} />
+            <img src={frameImageUrl(open.id)} alt={open.caption ?? t("ui.screen.screenshot")} />
             <figcaption>
               <time>{wall(open.t)}</time>
-              <time className="elapsed">{formatFrameTime(open.t)}</time>
-              <span>{open.caption ?? "（还没有画面摘要）"}</span>
+              <time className="elapsed">{formatFrameTime(open.t, locale)}</time>
+              <span>{open.caption ?? t("ui.screen.noCaption")}</span>
               <span className="lightbox-hint">
-                {frames.findIndex((f) => f.id === open.id) + 1} / {frames.length} · ← → 切换
+                {t("ui.screen.pager", {
+                  index: frames.findIndex((f) => f.id === open.id) + 1,
+                  count: frames.length,
+                })}
               </span>
               <button type="button" className="link" onClick={() => setOpenId(null)}>
-                关闭
+                {t("ui.close")}
               </button>
             </figcaption>
           </figure>

@@ -1,14 +1,16 @@
+import type { MessageRef } from "./i18n.ts";
 // 文字输入框的纯逻辑（docs/interfaces.md §6.2：text_input 不超过 2000 字、去掉首尾空白后不能为空）。
 
 export const MAX_TEXT_CHARS = 2000;
 
-export type Validation = { ok: true; text: string } | { ok: false; reason: string };
+export type Validation = { ok: true; text: string } | { ok: false; reason: MessageRef };
 
 /** 校验要发给助理的文字；通过时返回去掉首尾空白的文本。长度按字符（不是 UTF-16 码元）数。 */
 export function validateText(raw: string, max: number = MAX_TEXT_CHARS): Validation {
   const text = raw.trim();
-  if (!text) return { ok: false, reason: "消息是空的，没有发送" };
-  if ([...text].length > max) return { ok: false, reason: `消息太长（最多 ${max} 字），没有发送` };
+  if (!text) return { ok: false, reason: { code: "ui.input.empty" } };
+  if ([...text].length > max)
+    return { ok: false, reason: { code: "ui.input.tooLong", params: { max } } };
   return { ok: true, text };
 }
 

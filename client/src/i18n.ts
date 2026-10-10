@@ -1,7 +1,7 @@
-import { catalogs, networkMessageCodes, parameterTypes } from "./catalog";
-import type { Locale, MessageParams } from "./catalog";
+import { catalogs, networkMessageCodes, parameterTypes } from "./catalog.ts";
+import type { Locale, MessageParams } from "./catalog.ts";
 
-export type { Locale, MessageParams } from "./catalog";
+export type { Locale, MessageParams } from "./catalog.ts";
 export type LocalePreference = "auto" | Locale;
 export type MessageRef = { code: string; params?: MessageParams };
 export const LANGUAGE_STORAGE_KEY = "agentic-meeting.ui-language";
@@ -94,7 +94,12 @@ export function translate(locale: Locale, code: string, params?: MessageParams):
   if (!own(dictionary, code) || !validParams(code, params)) return dictionary[fallbackFor(code)];
   return dictionary[code].replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_, name: string) => {
     const value = params![name];
-    if (typeof value === "string") return value;
+    if (typeof value === "string") {
+      // 浏览器品牌/API 名称是固定技术列表；只在显示时换分隔符。
+      return code === "ui.browser.missing" && (name === "features" || name === "browsers")
+        ? value.split(", ").join(dictionary["ui.browser.listSeparator"])
+        : value;
+    }
     // 原 maxSecs 使用 Python .0f；保留半偶数舍入和整秒显示。
     const rounded =
       name === "maxSecs"

@@ -1,4 +1,5 @@
-// 会后报告的显示逻辑（docs/interfaces.md §5.6）。纯函数，可以用 npm test 直接测。
+import { translate, type Locale, type MessageRef } from "./i18n.ts";
+// 会后报告的显示逻辑（docs/interfaces.md §5.6）。不碰 DOM。
 
 import type { SessionState } from "./api.ts";
 
@@ -12,14 +13,15 @@ export interface ReportInfo {
   provider: string;
   text_md: string;
   error: string | null;
+  error_message?: MessageRef | null;
 }
 
 /** 生成期间多久问一次服务端。 */
 export const REPORT_POLL_MS = 2000;
 
 export const REPORT_PROVIDER_LABELS: Record<string, string> = {
-  realtime_llm: "实时模型",
-  agent_llm: "后台的远端模型",
+  realtime_llm: "ui.report.realtimeProvider",
+  agent_llm: "ui.report.agentProvider",
 };
 
 /** 报告的下载地址。 */
@@ -34,29 +36,41 @@ export function reportDownloadUrl(sessionId: string): string {
 export function reportBlocker(
   session: { state: SessionState; utterance_count: number } | null,
   report: Pick<ReportInfo, "status"> | null,
+  locale: Locale,
 ): string | null {
-  if (!session) return "还没有会议";
-  if (session.state === "live") return "会议正在进行，结束或断开之后才能生成报告";
-  if (report?.status === "running") return "报告正在生成";
-  if (session.utterance_count === 0) return "这场会议没有发言记录，写不出报告";
+  if (!session) return translate(locale, "ui.report.noSession");
+  if (session.state === "live") return translate(locale, "ui.report.live");
+  if (report?.status === "running") return translate(locale, "ui.report.busy");
+  if (session.utterance_count === 0) return translate(locale, "ui.report.noUtterances");
   return null;
 }
 
 /** 按钮上的字：没有报告时「生成报告」，有了之后「重新生成」。 */
-export function generateLabel(report: Pick<ReportInfo, "status"> | null): string {
-  return report === null ? "生成报告" : "重新生成";
+export function generateLabel(report: Pick<ReportInfo, "status"> | null, locale: Locale): string {
+  return translate(locale, report === null ? "ui.report.generate" : "ui.report.regenerate");
 }
 
 /** 报告区顶上那行说明。 */
-export function reportHeadline(report: ReportInfo | null): string {
-  if (report === null) return "这场会议还没有报告。";
-  const who = REPORT_PROVIDER_LABELS[report.provider] ?? report.provider;
+export function reportHeadline(report: ReportInfo | null, locale: Locale): string {
+  if (report === null) return translate(locale, "ui.report.none");
+  const provider = REPORT_PROVIDER_LABELS[report.provider];
+  const who = provider ? translate(locale, provider) : report.provider;
   switch (report.status) {
     case "running":
-      return `正在生成报告（由${who}撰写），长会议可能要几分钟…`;
-    case "failed":
-      return `报告没有生成出来：${report.error ?? "原因不明"}`;
+      return translate(locale, "ui.report.running", { provider: who });
+    case "failed": {
+      const reason = report.error_message
+        ? translate(locale, report.error_message.code, report.error_message.params)
+        : translate(locale, "report.failure.unknown");
+      return translate(locale, "ui.report.failed", { reason });
+    }
     case "done":
-      return `由${who}生成。`;
+      return translate(locale, "ui.report.done", { provider: who });
   }
+}
+
+export function reportDiagnostic(report: ReportInfo): string | null {
+  return !report.error_message || report.error_message.code === "report.failure.unknown"
+    ? report.error
+    : null;
 }

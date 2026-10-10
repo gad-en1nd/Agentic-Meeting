@@ -9,8 +9,9 @@ import { stopServer, waitForServer, type ServerExit } from "./server.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-export const test = base.extend<{ serverURL: string }>({
-  serverURL: async ({}, use, info) => {
+export const test = base.extend<{ serverURL: string; authEnabled: boolean }>({
+  authEnabled: [false, { option: true }],
+  serverURL: async ({ authEnabled }, use, info) => {
     const python = path.join(
       root,
       ".venv",
@@ -18,7 +19,12 @@ export const test = base.extend<{ serverURL: string }>({
     );
     const child = spawn(python, ["-m", "tests.browser.server"], {
       cwd: root,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        BROWSER_TEST_AUTH: authEnabled ? "1" : "0",
+        BROWSER_TEST_PASSWORD: "fictional-browser-passphrase",
+      },
     });
     const logPath = info.outputPath("server.log");
     const log = createWriteStream(logPath);

@@ -1,5 +1,6 @@
+import { translate, type Locale } from "./i18n.ts";
 // 屏幕截图的纯逻辑（docs/interfaces.md §5.1、§5.3）：对时、画面变化的判断、
-// 要不要上传、缩放尺寸、时间线。不碰 DOM，可以用 npm test 直接测；真正的采集在 useScreenShare.ts。
+// 要不要上传、缩放尺寸、时间线。不碰 DOM；真正的采集在 useScreenShare.ts。
 
 /** 服务端下发的截图参数（/api/session 响应里的 screen 字段，取自配置的 screen 段）。 */
 export interface ScreenConfig {
@@ -222,8 +223,10 @@ export function adjacentFrameIndex(
   return at < 0 || next < 0 || next >= frames.length ? -1 : next;
 }
 
-export function formatFrameTime(t: number): string {
+export function formatFrameTime(t: number, locale: Locale): string {
+  if (!Number.isFinite(t)) return translate(locale, "format.unavailable");
   const total = Math.max(0, Math.floor(t));
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const digits = new Intl.NumberFormat(locale, { minimumIntegerDigits: 2, useGrouping: false });
+  const pad = (n: number) => digits.format(n);
   return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
 }

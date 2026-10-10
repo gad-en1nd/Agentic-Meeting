@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>组会助理</title>
+    <title>%APP_TITLE%</title>
   </head>
   <body>
     <div id="root"></div>
@@ -13,11 +13,29 @@
       // 这段要在旧浏览器里也能跑：只用 ES5。模块脚本在 load 之前一定已经运行过。
       window.addEventListener("load", function () {
         if (document.documentElement.getAttribute("data-started")) return;
+        var locale = "zh-CN";
+        var saved = null;
+        try {
+          saved = window.localStorage.getItem("%LANGUAGE_STORAGE_KEY%");
+        } catch (error) {
+          // 存储不可用仍按浏览器偏好显示。
+        }
+        if (saved === "zh-CN" || saved === "en") locale = saved;
+        else {
+          var languages = navigator.languages && navigator.languages.length
+            ? navigator.languages : [navigator.language];
+          for (var i = 0; i < languages.length; i += 1) {
+            if (/^zh(?:-|$)/i.test(languages[i])) { locale = "zh-CN"; break; }
+            if (/^en(?:-|$)/i.test(languages[i])) { locale = "en"; break; }
+          }
+        }
+        var messages = %BOOT_I18N%;
+        document.documentElement.lang = locale;
+        document.title = messages[locale].title;
         var note = document.createElement("p");
         note.className = "unsupported";
         note.setAttribute("role", "alert");
-        note.textContent =
-          "页面没能启动。浏览器版本可能太旧，请使用 %MIN_BROWSERS% 或更新的版本；已经是新版本的话，请刷新页面重试。";
+        note.textContent = messages[locale].message;
         document.getElementById("root").appendChild(note);
       });
     </script>

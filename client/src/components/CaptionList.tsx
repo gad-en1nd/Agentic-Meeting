@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import type { ConnectionSpan } from "../api.ts";
@@ -52,6 +53,7 @@ export function CaptionList({
   selected,
   onSelect,
 }: Props) {
+  const { locale, t } = useI18n();
   const drag = useRef<Drag | null>(null);
   // 拖完松手时浏览器可能还会补一个点击事件：这一下不算「点一下切换」
   const swallowClick = useRef(false);
@@ -110,7 +112,7 @@ export function CaptionList({
     const secs = gaps.get(index);
     return secs === undefined ? null : (
       <p className="caption-gap" role="separator">
-        — 中断了 {formatSpan(secs)} —
+        {t("ui.caption.gap", { duration: formatSpan(secs, locale) })}
       </p>
     );
   };
@@ -133,8 +135,8 @@ export function CaptionList({
   }, [lines]);
 
   return (
-    <section className="panel" aria-label="字幕">
-      <h2>字幕</h2>
+    <section className="panel" aria-label={t("ui.caption.label")}>
+      <h2>{t("ui.caption.label")}</h2>
       <div
         className="captions"
         ref={scroller}
@@ -145,7 +147,7 @@ export function CaptionList({
       >
         {hasOlder && (
           <button type="button" className="link older" onClick={onLoadOlder}>
-            加载更早的发言
+            {t("ui.caption.older")}
           </button>
         )}
         {lines.length === 0 ? (
@@ -154,14 +156,14 @@ export function CaptionList({
           lines.map((line, index) => {
             const id = selectableId(line);
             const picked = id !== null && selected.has(id);
-            const wall = wallClockLabel(line.tStart, timeBase);
+            const wall = wallClockLabel(line.tStart, timeBase, locale);
             const head = (
               <>
-                <time className="wall" title="当时的时间">
+                <time className="wall" title={t("ui.time.wall")}>
                   {wall}
                 </time>
-                <time className="elapsed" title="会议进行到">
-                  {formatClock(line.tStart)}
+                <time className="elapsed" title={t("ui.time.elapsed")}>
+                  {formatClock(line.tStart, locale)}
                 </time>
                 <span className="speaker">{line.speakerName}</span>
               </>
@@ -180,8 +182,11 @@ export function CaptionList({
                       type="button"
                       className="caption-head caption-handle"
                       aria-pressed={picked}
-                      aria-label={`${picked ? "取消选中" : "选中"} ${line.speakerName} 在 ${formatClock(line.tStart)} 的发言`}
-                      title="点一下选中，按住上下拖可以连选；选中后点上方的说话人，就归到他名下"
+                      aria-label={t(picked ? "ui.caption.unselect" : "ui.caption.select", {
+                        name: line.speakerName,
+                        time: formatClock(line.tStart, locale),
+                      })}
+                      title={t("ui.caption.selectHelp")}
                       onMouseDown={(event) => {
                         if (event.button !== 0) return;
                         event.preventDefault(); // 拖的时候不要划选文字
@@ -195,7 +200,7 @@ export function CaptionList({
                     <span className="caption-head">{head}</span>
                   )}
                   <span className="text">
-                    {line.source === "text" && <span className="tag">文字</span>}
+                    {line.source === "text" && <span className="tag">{t("ui.textTag")}</span>}
                     {line.stable}
                     <span className="unstable">{line.unstable}</span>
                   </span>

@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useEffect, useState } from "react";
 
 import type { SpeakerInfo } from "../api.ts";
@@ -32,6 +33,7 @@ export function SpeakerBar({
   onAssign,
   onClearSelection,
 }: Props) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState<{ idx: number; name: string } | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const assigning = selectedCount > 0;
@@ -47,14 +49,18 @@ export function SpeakerBar({
       if (name) onAssign({ newSpeaker: name });
     };
     return (
-      <div className="speakers speakers-assigning" role="group" aria-label="把选中的发言归到">
-        <span className="speakers-label">已选 {selectedCount} 条，归到</span>
+      <div
+        className="speakers speakers-assigning"
+        role="group"
+        aria-label={t("ui.speaker.assignGroup")}
+      >
+        <span className="speakers-label">{t("ui.speaker.selected", { count: selectedCount })}</span>
         {assignTargets(speakers).map((p) => (
           <button
             key={p.idx}
             type="button"
             className="chip chip-target"
-            title={`把选中的 ${selectedCount} 条发言归到「${p.display_name}」名下`}
+            title={t("ui.speaker.assign", { count: selectedCount, name: p.display_name })}
             onClick={() => onAssign({ speakerIdx: p.idx })}
           >
             {p.display_name}
@@ -64,10 +70,10 @@ export function SpeakerBar({
           <button
             type="button"
             className="chip chip-target chip-new"
-            title="新建一个说话人，把选中的发言归到他名下"
+            title={t("ui.speaker.newHelp")}
             onClick={() => setAdding("")}
           >
-            ＋ 新说话人
+            {t("ui.speaker.new")}
           </button>
         ) : (
           <span
@@ -77,8 +83,8 @@ export function SpeakerBar({
             }}
           >
             <input
-              aria-label="新说话人的名字"
-              placeholder="名字，回车确认"
+              aria-label={t("ui.speaker.newName")}
+              placeholder={t("ui.speaker.placeholder")}
               list="speaker-names"
               value={adding}
               maxLength={50}
@@ -99,7 +105,7 @@ export function SpeakerBar({
             </datalist>
             <MemberChoices
               names={nameSuggestions(members, speakers, null)}
-              label={(name) => `新建说话人「${name}」，把选中的发言归到他名下`}
+              label={(name) => t("ui.speaker.newMember", { name })}
               onPick={(name) => {
                 setAdding(null);
                 onAssign({ newSpeaker: name });
@@ -108,7 +114,7 @@ export function SpeakerBar({
           </span>
         )}
         <button type="button" className="link" onClick={onClearSelection}>
-          取消选择
+          {t("ui.selection.clear")}
         </button>
       </div>
     );
@@ -127,8 +133,8 @@ export function SpeakerBar({
   };
 
   return (
-    <div className="speakers" role="group" aria-label="说话人">
-      <span className="speakers-label">说话人</span>
+    <div className="speakers" role="group" aria-label={t("ui.speaker.label")}>
+      <span className="speakers-label">{t("ui.speaker.label")}</span>
       {people.map((p) =>
         editing?.idx === p.idx ? (
           <span
@@ -140,7 +146,7 @@ export function SpeakerBar({
             }}
           >
             <input
-              aria-label={`给「${p.display_name}」改名`}
+              aria-label={t("ui.speaker.rename", { name: p.display_name })}
               list="speaker-names"
               value={editing.name}
               maxLength={50}
@@ -158,7 +164,7 @@ export function SpeakerBar({
             </datalist>
             <MemberChoices
               names={nameSuggestions(members, speakers, p.idx).filter((n) => n !== p.display_name)}
-              label={(name) => `把「${p.display_name}」改名为「${name}」`}
+              label={(name) => t("ui.speaker.memberRename", { from: p.display_name, to: name })}
               onPick={(name) => {
                 setEditing(null);
                 onRename(p.idx, name);
@@ -166,7 +172,7 @@ export function SpeakerBar({
             />
             {mergeTargets(speakers, p.idx).length > 0 && (
               <select
-                aria-label={`把「${p.display_name}」合并到另一个说话人`}
+                aria-label={t("ui.speaker.merge", { name: p.display_name })}
                 value=""
                 onChange={(event) => {
                   const into = Number(event.target.value);
@@ -175,14 +181,17 @@ export function SpeakerBar({
                   if (
                     target &&
                     window.confirm(
-                      `把「${p.display_name}」的全部发言都算到「${target.display_name}」名下吗？合并之后不能拆开。`,
+                      t("ui.speaker.mergeConfirm", {
+                        from: p.display_name,
+                        to: target.display_name,
+                      }),
                     )
                   ) {
                     onMerge(p.idx, into);
                   }
                 }}
               >
-                <option value="">合并到…</option>
+                <option value="">{t("ui.speaker.mergePlaceholder")}</option>
                 {mergeTargets(speakers, p.idx).map((target) => (
                   <option key={target.idx} value={target.idx}>
                     {target.display_name}
@@ -196,7 +205,7 @@ export function SpeakerBar({
             key={p.idx}
             type="button"
             className="chip"
-            title="点击改名，或合并到另一个说话人"
+            title={t("ui.speaker.editHelp")}
             onClick={() => setEditing({ idx: p.idx, name: p.display_name })}
           >
             {p.display_name}
@@ -220,9 +229,10 @@ function MemberChoices({
   label: (name: string) => string;
   onPick: (name: string) => void;
 }) {
+  const { t } = useI18n();
   if (names.length === 0) return null;
   return (
-    <span className="member-choices" role="group" aria-label="成员名单">
+    <span className="member-choices" role="group" aria-label={t("ui.member.label")}>
       {names.map((name) => (
         <button
           key={name}

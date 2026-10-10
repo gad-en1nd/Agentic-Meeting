@@ -1,3 +1,4 @@
+import { translate, type Locale } from "./i18n.ts";
 // 时间的两条轨：会议进行到第几分几秒（会话时间轴），和当时墙上的钟点（浏览器所在时区）。
 // 都是纯函数，可以用 npm test 直接测。
 
@@ -30,13 +31,18 @@ export function wallClockAt(t: number, base: TimeBase): number {
 }
 
 /** 墙上的钟点「14:03:05」，按浏览器所在时区。 */
-export function formatWallClock(unixSecs: number): string {
-  const d = new Date(unixSecs * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+export function formatWallClock(unixSecs: number, locale: Locale): string {
+  const date = new Date(unixSecs * 1000);
+  if (!Number.isFinite(date.getTime())) return translate(locale, "format.unavailable");
+  return new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
 }
 
-/** `t` 那一刻墙上的钟点；不知道是哪场会议（没有时间基准）时返回空串。 */
-export function wallClockLabel(t: number, base: TimeBase | null): string {
-  return base === null ? "" : formatWallClock(wallClockAt(t, base));
+/** 不知道是哪场会议时留空；原始会话/连接时间映射不变。 */
+export function wallClockLabel(t: number, base: TimeBase | null, locale: Locale): string {
+  return base === null ? "" : formatWallClock(wallClockAt(t, base), locale);
 }

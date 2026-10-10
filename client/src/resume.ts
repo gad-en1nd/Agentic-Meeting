@@ -1,5 +1,5 @@
+import { formatNumber, translate, type Locale } from "./i18n.ts";
 // 继续会议相关的纯逻辑：自动重连的退避、要不要重连、中断的空档。
-// 都是纯函数，可以用 npm test 直接测。
 
 import type { ConnectionSpan } from "./api.ts";
 
@@ -78,12 +78,16 @@ export function gapPositions(
 }
 
 /** 「12 分钟」「40 秒」「2 小时 05 分」。 */
-export function formatSpan(secs: number): string {
+export function formatSpan(secs: number, locale: Locale): string {
+  if (!Number.isFinite(secs)) return translate(locale, "format.unavailable");
   const total = Math.max(0, Math.round(secs));
-  if (total < 60) return `${total} 秒`;
+  if (total < 60) return translate(locale, "ui.duration.seconds", { seconds: total });
   const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes} 分钟`;
-  return `${Math.floor(minutes / 60)} 小时 ${String(minutes % 60).padStart(2, "0")} 分`;
+  if (minutes < 60) return translate(locale, "ui.duration.minutes", { minutes });
+  return translate(locale, "ui.duration.hours", {
+    hours: Math.floor(minutes / 60),
+    minutes: formatNumber(locale, minutes % 60).padStart(2, "0"),
+  });
 }
 
 /** 一场已中断的会议断了多久了（秒）：从它最后一次活动算到现在。 */

@@ -1,3 +1,4 @@
+import { translate, type Locale, type MessageRef } from "./i18n.ts";
 /**
  * 浏览器能不能开会（docs/user-guide.md「支持的浏览器」）。
  *
@@ -14,8 +15,10 @@ export const MIN_BROWSERS = [
 ] as const;
 
 /** 「Chrome 111、Edge 111、Firefox 114、Safari 16.4」 */
-export function minBrowsersText(): string {
-  return MIN_BROWSERS.map((b) => `${b.name} ${b.version}`).join("、");
+export function minBrowsersText(locale: Locale = "zh-CN"): string {
+  return MIN_BROWSERS.map((b) => `${b.name} ${b.version}`).join(
+    translate(locale, "ui.browser.listSeparator"),
+  );
 }
 
 /** 只取用到的几个属性，方便在不同全局对象上检查。 */
@@ -27,15 +30,21 @@ export interface BrowserEnv {
 }
 
 /** 能开会返回 null；否则返回给用户看的原因（只读地看历史会议不受影响）。 */
-export function meetingUnsupportedReason(env: BrowserEnv = window): string | null {
+export function meetingUnsupportedReason(env: BrowserEnv = window): MessageRef | null {
   // 不是 HTTPS 也不是 localhost 时浏览器直接不给麦克风接口，先说这个，换浏览器没用。
   if (!env.isSecureContext) {
-    return "这个页面不是通过 HTTPS 或 localhost 打开的，浏览器不允许使用麦克风，不能开始或继续会议；历史会议仍可查看。请改用 HTTPS 地址打开。";
+    return { code: "ui.browser.insecure" };
   }
   const missing: string[] = [];
   if (typeof env.RTCPeerConnection !== "function") missing.push("WebRTC");
-  if (typeof env.navigator.mediaDevices?.getUserMedia !== "function") missing.push("麦克风采集");
+  if (typeof env.navigator.mediaDevices?.getUserMedia !== "function") missing.push("getUserMedia");
   if (typeof env.AudioContext !== "function") missing.push("Web Audio");
   if (missing.length === 0) return null;
-  return `这个浏览器缺少${missing.join("、")}接口，不能开始或继续会议；历史会议仍可查看。请使用 ${minBrowsersText()} 或更新的版本，并检查浏览器设置或扩展是否关掉了这些功能。`;
+  return {
+    code: "ui.browser.missing",
+    params: {
+      features: missing.join(", "),
+      browsers: MIN_BROWSERS.map((browser) => `${browser.name} ${browser.version}`).join(", "),
+    },
+  };
 }

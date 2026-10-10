@@ -1,3 +1,4 @@
+import type { MessageRef } from "./i18n.ts";
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport, WavMediaManager } from "@pipecat-ai/small-webrtc-transport";
 import {
@@ -44,12 +45,6 @@ export async function ensureEchoCancellation(track: MediaStreamTrack): Promise<v
   } catch (error) {
     console.warn("无法开启麦克风的回声消除：", error);
   }
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string") return error;
-  return "未知错误";
 }
 
 /** 创建 Pipecat 客户端，并把它的回调接到界面状态的 dispatch 上。 */
@@ -103,7 +98,7 @@ export function createMeetingClient(
             dispatch({ type: "assistantState", state: message.state });
             break;
           case "notice":
-            dispatch({ type: "notice", level: message.level, text: message.text });
+            dispatch({ type: "notice", level: message.level, message: message.message });
             break;
           case "frame": {
             const { id, t, width, height } = message;
@@ -119,7 +114,7 @@ export function createMeetingClient(
             break;
           }
           case "task_event":
-            dispatch({ type: "taskEvent", taskId: message.task_id, summary: message.summary });
+            dispatch({ type: "taskEvent", taskId: message.task_id, event: message });
             break;
         }
       },
@@ -141,13 +136,13 @@ export function createMeetingClient(
       onTrackStopped: (track, participant) => {
         if (participant?.local && track.kind === "audio") onMicTrack(null);
       },
-      onDeviceError: (error) =>
-        dispatch({ type: "notice", level: "error", text: `麦克风不可用：${errorText(error)}` }),
+      onDeviceError: () =>
+        dispatch({ type: "notice", level: "error", message: { code: "ui.mic.unavailable" } }),
       onError: (message) => {
         // 实时模型、语音合成这类出错了还能继续开会的情况，服务端会另发一条中文的 notice；这里只管致命的
         const text = fatalErrorText(message.data);
         if (text === null) console.warn("服务端报告了一个错误：", message.data);
-        else dispatch({ type: "notice", level: "error", text });
+        else dispatch({ type: "notice", level: "error", message: text });
       },
     },
   });
@@ -165,7 +160,7 @@ export interface MeetingClient {
   /** 正在只读地看一场在别的设备上进行的会议 */
   watching: boolean;
   /** 这个浏览器不能开会的原因；能开会是 null。不能开会时开始、继续都不会发起连接 */
-  unsupported: string | null;
+  unsupported: MessageRef | null;
   /** 把一个说话人的全部发言并入另一个 */
   mergeSpeakers: (idx: number, into: number) => Promise<void>;
   /** 把选中的发言改成另一个说话人；成功返回 true */
@@ -241,15 +236,15 @@ export function useMeetingClient(): MeetingClient {
   }, []);
 
   const fail = useCallback((what: string, error: unknown) => {
-    const text = error instanceof ApiError ? error.message : errorText(error);
-    dispatch({ type: "notice", level: "error", text: `${what}：${text}` });
+    const cause = error instanceof ApiError ? error.messageRef : { code: "ui.error.unknown" };
+    dispatch({ type: "notice", level: "error", message: { code: what }, cause });
   }, []);
 
   const refreshSessions = useCallback(async () => {
     try {
       dispatch({ type: "sessionsLoaded", items: await api.listSessions() });
     } catch (error) {
-      fail("读取会议列表失败", error);
+      fail("ui.action.readList", error);
     }
   }, [api, fail]);
 
@@ -307,7 +302,7 @@ export function useMeetingClient(): MeetingClient {
         if (requestId !== viewRequest.current) return;
         if (error instanceof ApiError && error.status === 404)
           dispatch({ type: "viewLoaded", requestId, detail: null, items: [], speakers: [] });
-        fail("读取会议内容失败", error);
+        fail("ui.action.readView", error);
       }
     },
     [api, fail],
@@ -342,7 +337,7 @@ export function useMeetingClient(): MeetingClient {
         items: await api.listTasks(current.id),
       });
     } catch (error) {
-      fail("同步会议内容失败", error);
+      fail("ui.action.sync", error);
     }
   }, [api, fail, loadView, rememberSession]);
 
@@ -393,7 +388,7 @@ export function useMeetingClient(): MeetingClient {
   const connectTo = useCallback(
     async (sessionId: string | null, quiet = false): Promise<boolean> => {
       if (unsupported) {
-        if (!quiet) dispatch({ type: "notice", level: "error", text: unsupported });
+        if (!quiet) dispatch({ type: "notice", level: "error", message: unsupported });
         return false;
       }
       const data = request.current.requestData;
@@ -413,7 +408,7 @@ export function useMeetingClient(): MeetingClient {
         return true;
       } catch (error) {
         if (!quiet) {
-          dispatch({ type: "notice", level: "error", text: `连接失败：${errorText(error)}` });
+          dispatch({ type: "notice", level: "error", message: { code: "ui.connection.failed" } });
         }
         dispatch({ type: "transport", transport: "error" });
         await client.disconnect().catch(() => undefined);
@@ -477,7 +472,7 @@ export function useMeetingClient(): MeetingClient {
       dispatch({
         type: "notice",
         level: "error",
-        text: "自动重连没有成功。网络或服务恢复之后，点会议横幅上的「继续」接着开这场会议。",
+        message: { code: "ui.connection.retryFailed" },
       });
       return;
     }
@@ -531,7 +526,7 @@ export function useMeetingClient(): MeetingClient {
       try {
         await api.endSession(id); // 服务端写下「已结束」，并停掉这一路连接
       } catch (error) {
-        fail("结束会议失败", error);
+        fail("ui.action.end", error);
       }
     }
     await client.disconnect().catch((error: unknown) => console.warn("断开连接时出错：", error));
@@ -556,7 +551,7 @@ export function useMeetingClient(): MeetingClient {
       const items = await api.listUtterances(viewing.id, { beforeId: before, limit: PAGE_SIZE });
       dispatch({ type: "olderLoaded", items });
     } catch (error) {
-      fail("加载更早的发言失败", error);
+      fail("ui.action.loadOlder", error);
     }
   }, [api, fail]);
 
@@ -565,7 +560,7 @@ export function useMeetingClient(): MeetingClient {
       try {
         dispatch({ type: "sessionUpdated", summary: await api.renameSession(id, title) });
       } catch (error) {
-        fail("重命名失败", error);
+        fail("ui.action.rename", error);
       }
     },
     [api, fail],
@@ -579,7 +574,7 @@ export function useMeetingClient(): MeetingClient {
       try {
         dispatch({ type: "sessionUpdated", summary: await api.keepSession(id, keep) });
       } catch (error) {
-        fail("修改保留标记失败", error);
+        fail("ui.action.keep", error);
         await refreshSessions();
         if (latest.current.viewing?.id === id) await loadView(id);
       } finally {
@@ -595,7 +590,7 @@ export function useMeetingClient(): MeetingClient {
       try {
         await api.deleteSession(id);
       } catch (error) {
-        fail("删除失败", error);
+        fail("ui.action.delete", error);
         await refreshSessions();
         if (latest.current.viewing?.id === id) await loadView(id);
         return;
@@ -615,7 +610,7 @@ export function useMeetingClient(): MeetingClient {
         const done = await api.renameSpeaker(viewing.id, idx, displayName);
         dispatch({ type: "speakerRenamed", idx: done.idx, displayName: done.display_name });
       } catch (error) {
-        fail("改名失败", error);
+        fail("ui.action.renameSpeaker", error);
       }
     },
     [api, fail],
@@ -645,7 +640,7 @@ export function useMeetingClient(): MeetingClient {
         dispatch({ type: "speakersLoaded", speakers: await api.listSpeakers(viewing.id) });
         return true;
       } catch (error) {
-        fail("修改发言人失败", error);
+        fail("ui.action.assign", error);
         return false;
       }
     },
@@ -663,7 +658,7 @@ export function useMeetingClient(): MeetingClient {
         report: await api.getReport(viewing.id),
       });
     } catch (error) {
-      fail("生成报告失败", error);
+      fail("ui.action.report", error);
     }
   }, [api, fail]);
 
@@ -694,7 +689,7 @@ export function useMeetingClient(): MeetingClient {
           displayName: done.display_name,
         });
       } catch (error) {
-        fail("合并说话人失败", error);
+        fail("ui.action.merge", error);
       }
     },
     [api, fail],
@@ -704,17 +699,17 @@ export function useMeetingClient(): MeetingClient {
     (raw: string): boolean => {
       const checked = validateText(raw);
       if (!checked.ok) {
-        dispatch({ type: "notice", level: "warn", text: checked.reason });
+        dispatch({ type: "notice", level: "warn", message: checked.reason });
         return false;
       }
       if (latest.current.connection !== "connected") {
-        dispatch({ type: "notice", level: "warn", text: "还没有连接，请先点「开始新会议」" });
+        dispatch({ type: "notice", level: "warn", message: { code: "ui.input.notConnected" } });
         return false;
       }
       try {
         client.sendClientMessage("text_input", { text: checked.text });
       } catch (error) {
-        fail("发送失败", error);
+        fail("ui.action.send", error);
         return false;
       }
       dispatch({ type: "textSent" });
@@ -747,7 +742,7 @@ export function useMeetingClient(): MeetingClient {
       try {
         return await api.getTask(id);
       } catch (error) {
-        fail("读取任务失败", error);
+        fail("ui.action.loadTask", error);
         return null;
       }
     },
@@ -760,7 +755,7 @@ export function useMeetingClient(): MeetingClient {
         const { ...task } = await api.cancelTask(id);
         dispatch({ type: "task", task });
       } catch (error) {
-        fail("取消任务失败", error);
+        fail("ui.action.cancelTask", error);
       }
     },
     [api, fail],

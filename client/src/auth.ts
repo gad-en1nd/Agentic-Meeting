@@ -1,3 +1,4 @@
+import { parseMessage, type MessageRef } from "./i18n.ts";
 // 访问口令（docs/interfaces.md §5.7）。服务端没启用口令时这里什么也不做：状态接口报告 enabled=false，
 // 不需要令牌。启用时：页面先问一次登录状态，没登录就显示登录页；登录后拿到的 CSRF 令牌记在 authSession 里，
 // 所有改动数据的请求（包括 WebRTC 的 offer 和 ICE 候选）都带上它。任何接口回 401 时通知页面重新登录。
@@ -68,18 +69,22 @@ export function parseStatus(body: unknown): AuthStatus {
 }
 
 /** 登录失败时给用户看的话。 */
-export function loginErrorText(status: number, body: unknown, retryAfter: string | null): string {
-  if (status === 429) {
+export function loginErrorText(
+  status: number,
+  body: unknown,
+  retryAfter: string | null,
+): MessageRef {
+  if (status === 0) return { code: "ui.error.network" };
+  const message = parseMessage(body, "error.request.status", ["error."]);
+  if (message.code === "error.request.status") return { code: message.code, params: { status } };
+  if (status === 429 && message.code === "error.auth.rate_limited") {
     const secs = Number(retryAfter);
-    return Number.isFinite(secs) && secs > 0
-      ? `尝试次数过多，请 ${Math.ceil(secs / 60)} 分钟后再试`
-      : "尝试次数过多，请稍后再试";
+    const minutes = Math.ceil(secs / 60);
+    return Number.isFinite(secs) && secs > 0 && minutes <= 1_000_000
+      ? { code: "ui.auth.retry", params: { minutes } }
+      : { code: "ui.auth.rateLimited" };
   }
-  if (typeof body === "object" && body !== null && "error" in body) {
-    const text = (body as { error: unknown }).error;
-    if (typeof text === "string" && text) return text;
-  }
-  return status === 0 ? "无法连接到服务端" : `登录失败（${status}）`;
+  return message;
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -100,13 +105,13 @@ export async function fetchAuthStatus(
   session: AuthSession = authSession,
 ): Promise<AuthStatus> {
   const response = await fetchFn("/api/auth");
-  if (!response.ok) throw new Error(`读取登录状态失败（${response.status}）`);
+  if (!response.ok) throw new Error("读取登录状态失败");
   const status = parseStatus(await readJson(response));
   session.setToken(status.csrf_token);
   return status;
 }
 
-export type LoginResult = { ok: true; status: AuthStatus } | { ok: false; message: string };
+export type LoginResult = { ok: true; status: AuthStatus } | { ok: false; message: MessageRef };
 
 export async function login(
   password: string,

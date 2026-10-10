@@ -1,12 +1,14 @@
+import { useI18n } from "../I18nProvider.tsx";
 import type { ConnectionState } from "../meetingState.ts";
 import { recordingLabel } from "../sessionView.ts";
+import { LanguageSelector } from "./LanguageSelector.tsx";
 import { MicMeter } from "./MicMeter.tsx";
 
 const LABELS: Record<ConnectionState, string> = {
-  disconnected: "未连接",
-  connecting: "连接中…",
-  connected: "已连接",
-  error: "连接出错",
+  disconnected: "ui.connection.disconnected",
+  connecting: "ui.connection.connecting",
+  connected: "ui.connection.connected",
+  error: "ui.connection.error",
 };
 
 interface Props {
@@ -38,23 +40,25 @@ export function ControlBar({
   onStop,
   onLogout,
 }: Props) {
+  const { t } = useI18n();
   // 自动重连的间隙里连接是断开的，但用户仍然「在会议里」：按钮还是「结束会议」
   const active = connection === "connected" || connection === "connecting" || reconnectAttempt > 0;
   const label =
     reconnectAttempt > 0 && connection !== "connected"
-      ? `正在重连（第 ${reconnectAttempt} 次）…`
-      : LABELS[connection];
+      ? t("ui.connection.reconnecting", { attempt: reconnectAttempt })
+      : t(LABELS[connection]);
   return (
     <header className="topbar">
-      <h1>组会助理</h1>
+      <h1>{t("app.title")}</h1>
       <span className={`status status-${connection}`} role="status">
         {label}
       </span>
-      <span className="status" role="status" aria-label="转录状态">
-        {recordingLabel(connection, closedReason, reconnectAttempt)}
+      <span className="status" role="status" aria-label={t("ui.recording.label")}>
+        {t(recordingLabel(connection, closedReason, reconnectAttempt))}
       </span>
       <MicMeter track={micTrack} />
       <div className="spacer" />
+      <LanguageSelector />
       <button
         type="button"
         className="button button-quiet"
@@ -62,11 +66,11 @@ export function ControlBar({
         aria-controls="session-list"
         onClick={onToggleList}
       >
-        会议列表
+        {t("ui.session.list")}
       </button>
       {active ? (
         <button type="button" className="button button-stop" onClick={onStop}>
-          结束会议
+          {t("ui.session.stop")}
         </button>
       ) : (
         <button
@@ -75,12 +79,12 @@ export function ControlBar({
           disabled={!canStart}
           onClick={onStart}
         >
-          开始新会议
+          {t("ui.session.start")}
         </button>
       )}
       {onLogout && !active && (
         <button type="button" className="button button-quiet" onClick={onLogout}>
-          退出登录
+          {t("ui.auth.logout")}
         </button>
       )}
     </header>

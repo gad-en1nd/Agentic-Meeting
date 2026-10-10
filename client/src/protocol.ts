@@ -1,3 +1,5 @@
+import { parseMessage, type MessageRef } from "./i18n.ts";
+import { parseTaskItem, parseTaskEvent, type TaskEventItem } from "./tasks.ts";
 // 服务端 → 浏览器的自定义消息（docs/interfaces.md §6.1）。
 // 目前处理：caption、utterance、utterance_update、speaker、speakers_merged、session、session_closed、
 // assistant_state、notice、
@@ -29,7 +31,7 @@ export type NoticeLevel = (typeof NOTICE_LEVELS)[number];
 export interface NoticeMessage {
   type: "notice";
   level: NoticeLevel;
-  text: string;
+  message: MessageRef;
 }
 
 export const UTTERANCE_SOURCES = ["asr", "assistant", "text"] as const;
@@ -116,17 +118,17 @@ export interface TaskMessage {
   status: TaskStatus;
   brief: string | null;
   error: string | null;
+  error_message?: MessageRef | null;
+  brief_message?: MessageRef | null;
+  last_event?: TaskEventItem | null;
   modality: "voice" | "text";
   created_at: number;
 }
 
 /** 后台任务的一条进度。 */
-export interface TaskEventMessage {
+export interface TaskEventMessage extends TaskEventItem {
   type: "task_event";
   task_id: string;
-  at: number;
-  kind: string;
-  summary: string;
 }
 
 export type ServerMessage =
@@ -153,13 +155,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * RTVI 的 error 消息（`{error, fatal}`）要不要显示给用户：只显示致命的。
  * 不致命的（某个服务暂时不可用）由服务端另发中文的 notice，这里返回 null。
  */
-export function fatalErrorText(data: unknown): string | null {
-  if (typeof data !== "object" || data === null) return null;
-  const { error, fatal } = data as { error?: unknown; fatal?: unknown };
-  if (fatal !== true) return null;
-  return typeof error === "string" && error.trim()
-    ? `服务端出错：${error}`
-    : "服务端出错，连接可能已经中断";
+export function fatalErrorText(data: unknown): MessageRef | null {
+  return isRecord(data) && data.fatal === true ? { code: "error.connection.fatal" } : null;
 }
 
 export function parseServerMessage(data: unknown): ServerMessage | null {
@@ -193,7 +190,7 @@ export function parseServerMessage(data: unknown): ServerMessage | null {
     }
     case "notice": {
       const level = NOTICE_LEVELS.find((l) => l === data.level);
-      if (level && typeof data.text === "string") return { type: "notice", level, text: data.text };
+      if (level) return { type: "notice", level, message: parseMessage(data, "notice.generic") };
       return null;
     }
     case "utterance": {
@@ -297,29 +294,28 @@ export function parseServerMessage(data: unknown): ServerMessage | null {
       ) {
         return {
           type: "task",
-          id,
-          label,
-          goal,
-          status,
-          brief: brief ?? null,
-          error: error ?? null,
-          modality: modality === "text" ? "text" : "voice",
-          created_at,
+          ...parseTaskItem({
+            id,
+            label,
+            goal,
+            status,
+            brief: brief ?? null,
+            error: error ?? null,
+            modality: modality === "text" ? "text" : "voice",
+            created_at,
+            error_message: data.error_message as MessageRef | null,
+            brief_message: data.brief_message as MessageRef | null,
+            last_event: data.last_event as TaskEventItem | null,
+          }),
         };
       }
       return null;
     }
     case "task_event": {
-      const { task_id, at, kind, summary } = data;
-      if (
-        typeof task_id === "string" &&
-        typeof at === "number" &&
-        typeof kind === "string" &&
-        typeof summary === "string"
-      ) {
-        return { type: "task_event", task_id, at, kind, summary };
-      }
-      return null;
+      const event = parseTaskEvent(data);
+      return typeof data.task_id === "string" && event
+        ? { type: "task_event", task_id: data.task_id, ...event }
+        : null;
     }
     case "frame_caption": {
       const { id, caption } = data;

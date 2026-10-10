@@ -1,5 +1,7 @@
+import { parseMessage, type MessageRef } from "./i18n.ts";
+import { optionalMessage, parseTaskItem, parseTaskDetail } from "./tasks.ts";
 // 服务端的 HTTP 接口（docs/interfaces.md §5.1、§5.4）。页面一打开就用它们取会议列表和最近的对话，
-// 不需要音频连接。错误统一是 {"error": "<中文说明>"}，这里转成 ApiError。
+// 不需要音频连接。错误的受控 code/params 转成 ApiError，兼容 error 原文不参与界面翻译。
 // 启用了访问口令时（§5.7），改动性的请求带上 CSRF 令牌；回 401 说明登录失效，通知页面重新登录。
 
 import { authSession, withCsrf, type AuthSession } from "./auth.ts";
@@ -54,9 +56,11 @@ export interface SpeakerMerge {
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly messageRef: MessageRef;
 
-  constructor(message: string, status: number) {
-    super(message);
+  constructor(message: MessageRef, status: number) {
+    super(message.code);
+    this.messageRef = message;
     this.name = "ApiError";
     this.status = status;
   }
@@ -126,19 +130,19 @@ export function createApi(
     try {
       response = await fetchFn(path, withCsrf(init, session.csrfToken));
     } catch {
-      throw new ApiError("无法连接到服务端", 0);
+      throw new ApiError({ code: "ui.error.network" }, 0);
     }
     if (response.status === 401) session.notifyUnauthorized();
     if (!response.ok) {
-      let message = `请求失败（${response.status}）`;
+      let message: MessageRef = {
+        code: "error.request.status",
+        params: { status: response.status },
+      };
       try {
-        const body: unknown = await response.json();
-        if (typeof body === "object" && body !== null && "error" in body) {
-          const text = (body as { error: unknown }).error;
-          if (typeof text === "string" && text) message = text;
-        }
+        const parsed = parseMessage(await response.json(), "error.request.status", ["error."]);
+        if (parsed.code !== "error.request.status") message = parsed;
       } catch {
-        // 响应不是 JSON：用上面的通用说明
+        // 非 JSON 的旧响应只使用本地 HTTP 状态说明。
       }
       throw new ApiError(message, response.status);
     }
@@ -246,13 +250,23 @@ export function createApi(
       const body = await request<{ items: TaskItem[] }>(
         `/api/tasks${query({ session_id: sessionId })}`,
       );
-      return body.items;
+      return body.items.map(parseTaskItem);
     },
-    getTask: (id) => request<TaskDetail>(`/api/tasks/${enc(id)}`),
-    cancelTask: (id) => request<TaskItem>(`/api/tasks/${enc(id)}/cancel`, { method: "POST" }),
+    async getTask(id) {
+      return parseTaskDetail(await request<TaskDetail>(`/api/tasks/${enc(id)}`));
+    },
+    async cancelTask(id) {
+      return parseTaskItem(
+        await request<TaskItem>(`/api/tasks/${enc(id)}/cancel`, { method: "POST" }),
+      );
+    },
     async getReport(sessionId) {
       try {
-        return await request<ReportInfo>(`/api/sessions/${enc(sessionId)}/report`);
+        const report = await request<ReportInfo>(`/api/sessions/${enc(sessionId)}/report`);
+        return {
+          ...report,
+          error_message: optionalMessage(report.error_message, "report.failure.unknown"),
+        };
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) return null;
         throw error;

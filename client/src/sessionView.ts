@@ -1,35 +1,38 @@
+import {
+  formatDateTime,
+  formatDuration as localizedDuration,
+  translate,
+  type Locale,
+} from "./i18n.ts";
 // 会议列表和会话信息的显示逻辑（纯函数，可以用 npm test 直接测）。
 
 import type { SessionState, SessionSummary, SpeakerInfo } from "./api.ts";
 
 export const STATE_LABELS: Record<SessionState, string> = {
-  live: "进行中",
-  interrupted: "已中断",
-  ended: "已结束",
+  live: "ui.session.live",
+  interrupted: "ui.session.interrupted",
+  ended: "ui.session.ended",
 };
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
+/** Unix 秒 → 浏览器本地日期与分钟。 */
+export function formatStartedAt(unixSecs: number, locale: Locale): string {
+  return formatDateTime(locale, unixSecs);
 }
 
-/** Unix 秒 → 本地时间的「10月8日 14:03」。 */
-export function formatStartedAt(unixSecs: number): string {
-  const d = new Date(unixSecs * 1000);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** 没有用户标题时仅提供显示用的本地化标题，不写回会议数据。 */
+export function sessionTitle(
+  session: { title: string; started_at: number },
+  locale: Locale,
+): string {
+  return (
+    session.title.trim() ||
+    translate(locale, "ui.session.unnamed", { date: formatStartedAt(session.started_at, locale) })
+  );
 }
 
-/** 会议标题；没起名字的用开始时间代替。 */
-export function sessionTitle(session: { title: string; started_at: number }): string {
-  const title = session.title.trim();
-  return title || `未命名会议 · ${formatStartedAt(session.started_at)}`;
-}
-
-/** 时长：不到一分钟、N 分钟、N 小时 NN 分。 */
-export function formatDuration(secs: number): string {
-  const minutes = Math.floor(Math.max(0, secs) / 60);
-  if (minutes < 1) return "不到 1 分钟";
-  if (minutes < 60) return `${minutes} 分钟`;
-  return `${Math.floor(minutes / 60)} 小时 ${pad(minutes % 60)} 分`;
+/** 会话仍按分钟显示；任务和中断分别保留自己的秒精度。 */
+export function formatDuration(secs: number, locale: Locale): string {
+  return localizedDuration(locale, secs);
 }
 
 /** 列表里每场会议下面那行预览：最后一句话，太长截断。 */
@@ -107,9 +110,9 @@ export function recordingLabel(
   closedReason: string | null,
   retry: number,
 ): string {
-  if (closedReason !== null) return "转录已停止";
-  if (connection === "connected") return "正在转录 · 发言和共享画面保存在服务器";
-  if (retry > 0) return "转录已断开 · 正在重连";
-  if (connection === "connecting") return "正在连接 · 尚未转录";
-  return "未在本机转录";
+  if (closedReason !== null) return "ui.recording.stopped";
+  if (connection === "connected") return "ui.recording.active";
+  if (retry > 0) return "ui.recording.reconnecting";
+  if (connection === "connecting") return "ui.recording.connecting";
+  return "ui.recording.idle";
 }

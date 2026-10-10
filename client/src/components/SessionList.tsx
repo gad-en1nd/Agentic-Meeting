@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useState } from "react";
 
 import type { SessionSummary } from "../api.ts";
@@ -37,6 +38,7 @@ export function SessionList({
   keepPending,
   onClose,
 }: Props) {
+  const { locale, t } = useI18n();
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
 
   const commit = () => {
@@ -45,16 +47,21 @@ export function SessionList({
   };
 
   return (
-    <aside className="drawer" id="session-list" aria-label="会议列表">
+    <aside className="drawer" id="session-list" aria-label={t("ui.session.list")}>
       <div className="drawer-head">
-        <h2>最近的会议</h2>
-        <button type="button" className="link" aria-label="关闭会议列表" onClick={onClose}>
+        <h2>{t("ui.session.recent")}</h2>
+        <button
+          type="button"
+          className="link"
+          aria-label={t("ui.session.closeList")}
+          onClick={onClose}
+        >
           ×
         </button>
       </div>
-      {locked && <p className="drawer-hint">会议进行中，结束后才能查看其他会议。</p>}
+      {locked && <p className="drawer-hint">{t("ui.session.locked")}</p>}
       {sessions.length === 0 ? (
-        <p className="empty">还没有会议记录。</p>
+        <p className="empty">{t("ui.session.noRecords")}</p>
       ) : (
         <ul className="sessions">
           {sessions.map((s) => (
@@ -65,7 +72,7 @@ export function SessionList({
               {editing?.id === s.id ? (
                 <input
                   className="banner-input"
-                  aria-label="会议标题"
+                  aria-label={t("ui.session.title")}
                   value={editing.title}
                   maxLength={200}
                   autoFocus
@@ -83,13 +90,16 @@ export function SessionList({
                   disabled={locked && s.state !== "live"}
                   onClick={() => onSelect(s.id)}
                 >
-                  <span className="session-title">{sessionTitle(s)}</span>
+                  <span className="session-title">{sessionTitle(s, locale)}</span>
                   <span className={`badge badge-session-${s.state}`}>
-                    {s.deletion_pending ? "待删除" : STATE_LABELS[s.state]}
+                    {t(s.deletion_pending ? "ui.session.pending" : STATE_LABELS[s.state])}
                   </span>
                   <span className="session-meta">
-                    {formatStartedAt(s.started_at)} · {formatDuration(s.duration_secs)} ·{" "}
-                    {s.utterance_count} 条
+                    {t("ui.session.listMeta", {
+                      date: formatStartedAt(s.started_at, locale),
+                      duration: formatDuration(s.duration_secs, locale),
+                      count: s.utterance_count,
+                    })}
                   </span>
                   {!s.deletion_pending && previewLine(s) && (
                     <span className="session-preview">{previewLine(s)}</span>
@@ -101,54 +111,56 @@ export function SessionList({
                   type="button"
                   className="link"
                   aria-pressed={s.keep}
-                  aria-label={`保留：${sessionTitle(s)}`}
+                  aria-label={t("ui.session.keepNamed", { title: sessionTitle(s, locale) })}
                   disabled={s.deletion_pending || keepPending.has(s.id)}
-                  title="免于自动清理；仍可人工删除"
+                  title={t("ui.session.keepHelp")}
                   onClick={() => onKeep(s.id, !s.keep)}
                 >
-                  {keepPending.has(s.id) ? "保存中…" : s.keep ? "已保留" : "保留"}
+                  {t(
+                    keepPending.has(s.id)
+                      ? "ui.session.saving"
+                      : s.keep
+                        ? "ui.session.kept"
+                        : "ui.session.keep",
+                  )}
                 </button>
                 {!locked && !s.deletion_pending && (
                   <button
                     type="button"
                     className="link"
-                    aria-label={`继续：${sessionTitle(s)}`}
-                    title={
-                      s.state === "live"
-                        ? "这场会议正在另一台设备上进行；点了之后连接会转到这台设备"
-                        : undefined
-                    }
+                    aria-label={t("ui.session.resumeNamed", { title: sessionTitle(s, locale) })}
+                    title={s.state === "live" ? t("ui.session.takeoverHelp") : undefined}
                     onClick={() => onResume(s.id)}
                   >
-                    {s.state === "live" ? "接过来继续" : "继续"}
+                    {t(s.state === "live" ? "ui.session.takeoverShort" : "ui.session.resume")}
                   </button>
                 )}
                 <button
                   type="button"
                   className="link"
                   disabled={s.deletion_pending}
-                  aria-label={`重命名：${sessionTitle(s)}`}
+                  aria-label={t("ui.session.renameNamed", { title: sessionTitle(s, locale) })}
                   onClick={() => setEditing({ id: s.id, title: s.title })}
                 >
-                  重命名
+                  {t("ui.session.rename")}
                 </button>
                 <button
                   type="button"
                   className="link link-danger"
-                  aria-label={`删除：${sessionTitle(s)}`}
+                  aria-label={t("ui.session.deleteNamed", { title: sessionTitle(s, locale) })}
                   disabled={!canDelete(s)}
-                  title={canDelete(s) ? undefined : "会议进行中，请先结束"}
+                  title={canDelete(s) ? undefined : t("ui.session.deleteBlocked")}
                   onClick={() => {
                     if (
                       window.confirm(
-                        `确定删除「${sessionTitle(s)}」吗？它的全部发言、截图和任务记录都会被删除，不能恢复。`,
+                        t("ui.session.deleteConfirm", { title: sessionTitle(s, locale) }),
                       )
                     ) {
                       onDelete(s.id);
                     }
                   }}
                 >
-                  {s.deletion_pending ? "重试删除" : "删除"}
+                  {t(s.deletion_pending ? "ui.session.deleteRetry" : "ui.session.delete")}
                 </button>
               </span>
             </li>

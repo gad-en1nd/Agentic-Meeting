@@ -9,7 +9,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   reporter: [["list"], ["html", { open: "never" }]],
-  use: { trace: "retain-on-failure", screenshot: "only-on-failure" },
+  use: { locale: "zh-CN", trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
     {

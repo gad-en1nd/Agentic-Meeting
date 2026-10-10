@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { usePipecatClientMediaTrack } from "@pipecat-ai/client-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -7,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * 这时不再悄悄没声音，而是显示一个按钮，用户点一下就在这次点击里重新播放。
  */
 export function AssistantAudio() {
+  const { t } = useI18n();
   const audio = useRef<HTMLAudioElement>(null);
   const track = usePipecatClientMediaTrack("audio", "bot");
   const [blocked, setBlocked] = useState(false);
@@ -38,9 +40,9 @@ export function AssistantAudio() {
       <audio ref={audio} />
       {blocked && (
         <p className="audio-blocked" role="alert">
-          浏览器拦下了助理的声音。
+          {t("ui.audio.blocked")}
           <button type="button" className="button button-small" onClick={() => void play()}>
-            打开助理声音
+            {t("ui.audio.enable")}
           </button>
         </p>
       )}

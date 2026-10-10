@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { I18nProvider } from "./I18nProvider.tsx";
 import { AuthGate } from "./components/AuthGate.tsx";
 import "./styles.css";
 
@@ -9,6 +10,8 @@ document.documentElement.dataset.started = "true";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AuthGate />
+    <I18nProvider>
+      <AuthGate />
+    </I18nProvider>
   </StrictMode>,
 );

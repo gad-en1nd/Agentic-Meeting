@@ -1,3 +1,4 @@
+import { useI18n } from "../I18nProvider.tsx";
 import { useEffect, useState } from "react";
 
 import type { SessionSummary } from "../api.ts";
@@ -38,6 +39,7 @@ export function SessionBanner({
   onResume,
   onStart,
 }: Props) {
+  const { locale, t } = useI18n();
   const [editing, setEditing] = useState<string | null>(null);
   // 「已中断 12 分钟」要跟着时间走：半分钟刷新一次
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -47,11 +49,7 @@ export function SessionBanner({
   }, []);
 
   if (!session) {
-    return (
-      <p className="banner banner-empty">
-        还没有会议。点右上角的「开始新会议」，说的话会实时显示在下面，并保存在服务端。
-      </p>
-    );
+    return <p className="banner banner-empty">{t("ui.session.empty")}</p>;
   }
 
   const commit = () => {
@@ -62,15 +60,15 @@ export function SessionBanner({
   const interrupted = session.state === "interrupted" && idle;
 
   return (
-    <div className="banner" role="group" aria-label="当前查看的会议">
+    <div className="banner" role="group" aria-label={t("ui.session.current")}>
       {editing === null ? (
         <>
-          <strong className="banner-title">{sessionTitle(session)}</strong>
+          <strong className="banner-title">{sessionTitle(session, locale)}</strong>
           <button
             type="button"
             className="link"
             disabled={session.deletion_pending}
-            aria-label="重命名这场会议"
+            aria-label={t("ui.session.renameCurrent")}
             onClick={() => setEditing(session.title)}
           >
             ✎
@@ -79,7 +77,7 @@ export function SessionBanner({
       ) : (
         <input
           className="banner-input"
-          aria-label="会议标题"
+          aria-label={t("ui.session.title")}
           value={editing}
           maxLength={200}
           autoFocus
@@ -92,32 +90,35 @@ export function SessionBanner({
         />
       )}
       <span className={`badge badge-session-${session.state}`}>
-        {session.deletion_pending ? "待删除" : STATE_LABELS[session.state]}
+        {t(session.deletion_pending ? "ui.session.pending" : STATE_LABELS[session.state])}
       </span>
       <span className="banner-meta">
-        开始于 {formatStartedAt(session.started_at)} · {formatDuration(session.duration_secs)} ·{" "}
-        {session.utterance_count} 条发言
+        {t("ui.session.meta", {
+          date: formatStartedAt(session.started_at, locale),
+          duration: formatDuration(session.duration_secs, locale),
+          count: session.utterance_count,
+        })}
       </span>
       <button
         type="button"
         className="link"
         aria-pressed={session.keep}
         disabled={session.deletion_pending || keepPending}
-        title="免于自动清理；仍可人工删除"
+        title={t("ui.session.keepHelp")}
         onClick={() => onKeep(session.id, !session.keep)}
       >
-        {keepPending ? "保存中…" : session.keep ? "已保留" : "保留"}
+        {t(
+          keepPending ? "ui.session.saving" : session.keep ? "ui.session.kept" : "ui.session.keep",
+        )}
       </button>
       {session.deletion_pending && (
-        <span className="banner-hint banner-hint-warn">
-          删除尚未完成，内容可能已部分移除。请在会议列表重试删除。
-        </span>
+        <span className="banner-hint banner-hint-warn">{t("ui.session.deleteWarning")}</span>
       )}
       {!session.deletion_pending && (
         <span className="banner-exports">
-          导出：
+          {t("ui.session.exports")}
           <a className="link" href={exportUrl(session.id)} download>
-            转录
+            {t("ui.session.transcript")}
           </a>
           <a className="link" href={exportUrl(session.id, "json")} download>
             JSON
@@ -126,45 +127,47 @@ export function SessionBanner({
             className="link"
             href={exportUrl(session.id, "zip")}
             download
-            title="转录、JSON、报告、全部截图和任务产物，打成一个压缩包"
+            title={t("ui.session.packageHelp")}
           >
-            完整包
+            {t("ui.session.package")}
           </a>
         </span>
       )}
       {reconnectAttempt > 0 && (
         <span className="banner-hint banner-hint-warn">
-          连接断开了，正在自动重连（第 {reconnectAttempt} 次）…
+          {t("ui.session.reconnecting", { attempt: reconnectAttempt })}
         </span>
       )}
       {watching && !session.deletion_pending && (
         <span className="banner-hint">
-          正在另一台设备上进行，这里只读，每 3 秒刷新一次。
+          {t("ui.session.watching")}
           <button type="button" className="link" onClick={() => onResume(session.id)}>
-            在这台设备上继续
+            {t("ui.session.takeover")}
           </button>
         </span>
       )}
       {interrupted && (
         <span className="banner-hint">
           {interruptedSecs(session, now) < 60
-            ? "这场会议刚刚中断"
-            : `这场会议已中断 ${formatSpan(interruptedSecs(session, now))}`}
+            ? t("ui.session.justInterrupted")
+            : t("ui.session.interruptedFor", {
+                duration: formatSpan(interruptedSecs(session, now), locale),
+              })}
           <button
             type="button"
             className="button button-start button-small"
             onClick={() => onResume(session.id)}
           >
-            继续
+            {t("ui.session.resume")}
           </button>
           <button type="button" className="link" onClick={onStart}>
-            开始新会议
+            {t("ui.session.start")}
           </button>
         </span>
       )}
       {session.state === "ended" && idle && (
         <button type="button" className="link" onClick={() => onResume(session.id)}>
-          继续这场会议
+          {t("ui.session.resumeCurrent")}
         </button>
       )}
     </div>

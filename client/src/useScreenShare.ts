@@ -53,7 +53,7 @@ async function encode(canvas: HTMLCanvasElement): Promise<Blob> {
   if (webp && webp.type === "image/webp") return webp;
   const jpeg = await toBlob(canvas, "image/jpeg", JPEG_QUALITY);
   if (jpeg && jpeg.type === "image/jpeg") return jpeg;
-  throw new Error("浏览器无法把画面编码成图片");
+  throw new ApiError({ code: "ui.screen.encodeFailed" }, 0);
 }
 
 /**
@@ -115,7 +115,7 @@ export function useScreenShare({
       dispatch({
         type: "notice",
         level: "error",
-        text: "这个浏览器不能共享屏幕（需要桌面浏览器，并通过 HTTPS 或 localhost 访问）",
+        message: { code: "ui.screen.unsupported" },
       });
       return;
     }
@@ -128,8 +128,7 @@ export function useScreenShare({
     } catch (error) {
       // 用户在选择窗口里点了取消：不算出错
       if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
-        const text = error instanceof Error ? error.message : "未知错误";
-        dispatch({ type: "notice", level: "error", text: `无法共享屏幕：${text}` });
+        dispatch({ type: "notice", level: "error", message: { code: "ui.screen.startFailed" } });
       }
       return;
     }
@@ -177,9 +176,13 @@ export function useScreenShare({
         failures += 1;
         // 连续失败只提示第一次，之后每个节拍照常重试
         if (failures === 1) {
-          const text =
-            error instanceof ApiError || error instanceof Error ? error.message : "未知错误";
-          dispatch({ type: "notice", level: "warn", text: `截图上传失败：${text}` });
+          const cause = error instanceof ApiError ? error.messageRef : { code: "ui.error.unknown" };
+          dispatch({
+            type: "notice",
+            level: "warn",
+            message: { code: "ui.screen.uploadFailed" },
+            cause,
+          });
         }
       } finally {
         busy = false;
