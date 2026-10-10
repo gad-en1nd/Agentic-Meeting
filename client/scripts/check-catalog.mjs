@@ -60,6 +60,32 @@ for (const relative of ["../../docs/interfaces.md", "../../docs/zh-CN/interfaces
 }
 for (const code of networkMessageCodes)
   assert(Object.hasOwn(parameterTypes, code), `${code}: 网络键缺少词条`);
+const backend = await readFile(
+  new URL("../../src/agentic_meeting/messages.py", import.meta.url),
+  "utf8",
+);
+const registry = /^TEXTS = \{([\s\S]*?)^\}/m.exec(backend);
+assert(registry, "服务端必须保持可审阅的字面消息注册表");
+const entries = [...registry[1].matchAll(/^\s+"([^"]+)": ([^\n]+),$/gm)];
+assert.deepEqual(
+  entries.map((match) => match[1]).sort(),
+  [...networkMessageCodes].sort(),
+  "服务端与客户端的网络键必须一致",
+);
+const stringDeclaration = /^STRING_PARAMS = \{([^}]+)\}/m.exec(backend);
+assert(stringDeclaration, "服务端必须声明字符串参数");
+const stringParams = new Set(
+  [...stringDeclaration[1].matchAll(/"(\w+)"/g)].map((match) => match[1]),
+);
+for (const [, code, template] of entries) {
+  const names = [
+    ...new Set([...template.matchAll(/\{(\w+)(?::[^}]+)?\}/g)].map((match) => match[1])),
+  ];
+  const schema = Object.fromEntries(
+    names.map((name) => [name, stringParams.has(name) ? "string" : "number"]),
+  );
+  assert.deepEqual(parameterTypes[code], schema, `${code}: 服务端和客户端插值不一致`);
+}
 console.log(
   `Catalogs checked: ${keys(parameterTypes).length} bilingual keys, ${networkMessageCodes.length} network keys.`,
 );
