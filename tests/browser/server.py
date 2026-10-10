@@ -294,7 +294,12 @@ class ControlledBot:
 
 def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
     bot = ControlledBot()
-    app = create_app(cfg, store=store, bot=bot)
+    app = create_app(
+        cfg,
+        store=store,
+        bot=bot,
+        static_dir=Path(__file__).resolve().parents[2] / "client" / "dist",
+    )
     control = FastAPI()
 
     @control.get("/state")
