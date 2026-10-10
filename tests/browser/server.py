@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import tempfile
 import time
@@ -41,7 +42,9 @@ def configuration(root: Path) -> AppConfig:
     cfg.agent.enabled = cfg.embedding.enabled = cfg.tts.enabled = False
     cfg.screen.caption = False
     cfg.server.ice_servers = []
-    cfg.server.password_env = ""
+    cfg.server.password_env = (
+        "BROWSER_TEST_PASSWORD" if os.environ.get("BROWSER_TEST_AUTH") == "1" else ""
+    )
     return cfg
 
 
@@ -94,6 +97,112 @@ async def seed(store: Store, root: Path) -> dict[str, Any]:
         extra = await store.create_task(ended.id, goal=goal, requested_t=5)
         await store.update_task(extra.id, status="succeeded", brief=brief, finished_at=now)
     return {"ended": ended.id, "interrupted": interrupted.id, "task": task.id, "frame": frame.id}
+
+
+async def seed_localization(store: Store) -> dict[str, Any]:
+    """通过真实 Store 保存可信来源和历史原文，HTTP 仍走生产投影。"""
+    clock = 1_700_000_000.0
+    session = await store.create_session("语言测试原始会议", now=clock)
+    await store.end_session(session.id, now=clock + 3601)
+    await store.add_utterance(Utterance(session.id, 1, 0, 1, "原始中文字幕不翻译"))
+    await store.rename_speaker(session.id, 1, "原始中文姓名")
+    tasks = {}
+    for index, (name, status, seconds, reason) in enumerate(
+        (
+            ("failed", "failed", 61, {"code": "task.failure.timeout", "params": {"minutes": 2}}),
+            ("cancelled", "cancelled", 59, {"code": "task.failure.cancelled", "params": {}}),
+            ("running", "running", None, None),
+            ("fallback", "succeeded", 3601, None),
+            ("legacy", "failed", 0, None),
+        )
+    ):
+        task = await store.create_task(
+            session.id,
+            goal=f"原始中文目标 {name}",
+            requested_by=1,
+            requested_t=2,
+            now=clock + index,
+        )
+        finished_at = clock + seconds if seconds is not None else None
+        error = "原始外部诊断：fictional failure" if status == "failed" else None
+        if name == "cancelled":
+            error = "已取消"
+        await store.update_task(
+            task.id,
+            status=status,
+            started_at=clock,
+            finished_at=finished_at,
+            error=error,
+            brief="任务已完成，详情见任务面板" if name == "fallback" else "",
+            detail_md="## 原始中文模型结果\n不随界面语言改写。",
+        )
+        if name != "legacy":
+            await store.add_task_event(
+                task.id,
+                "tool_call",
+                "正在检索「原始检索片段」",
+                {
+                    "message": {"code": "task.tool.search", "params": {"query": "原始检索片段"}},
+                    "tool": "fictional-tool",
+                    "arguments": {"private": "不应透传的原始参数"},
+                },
+                now=clock + index,
+            )
+            if seconds is not None:
+                payload = {
+                    "message": {"code": f"task.event.{status}", "params": {}},
+                    "task_status": status,
+                    "task_finished_at": finished_at,
+                }
+                if reason is not None:
+                    payload["error_message"] = reason
+                if name == "failed":
+                    payload["diagnostic"] = "原始外部诊断：fictional failure"
+                if name == "fallback":
+                    payload["brief_message"] = {"code": "task.result.fallback", "params": {}}
+                await store.add_task_event(
+                    task.id, status, "原始兼容终态文案", payload, now=finished_at
+                )
+        else:
+            await store.add_task_event(task.id, "failed", "历史原始进度", now=clock)
+        tasks[name] = task.id
+    reports, report_sessions = {}, {}
+    for index, status in enumerate(("failed", "running", "done", "legacy"), 1):
+        report_session = await store.create_session(
+            f"原始报告会议 {status}", now=clock + index * 10
+        )
+        await store.end_session(report_session.id, now=clock + index * 10 + 59)
+        report_id = await store.create_report(report_session.id, provider="agent_llm", now=clock)
+        if status in {"failed", "legacy"}:
+            await store.fail_report(
+                report_id,
+                "原始报告诊断：fictional report failure",
+                now=clock + 1,
+                error_message={"code": "report.failure.timeout", "params": {}}
+                if status == "failed"
+                else None,
+            )
+        elif status == "done":
+            await store.finish_report(
+                report_id, "# 原始中文报告\n模型正文保留原文。", now=clock + 1
+            )
+        reports[status] = report_id
+        report_sessions[status] = report_session.id
+    under = await store.create_session("短于一分钟", now=clock + 100)
+    await store.end_session(under.id, now=clock + 159)
+    interrupted = await store.create_session("中断五十九秒", now=time.time() - 59)
+    return {
+        "session": session.id,
+        "tasks": tasks,
+        "reports": reports,
+        "reportSessions": report_sessions,
+        "spans": {
+            "sessionUnderMinute": under.id,
+            "sessionHour": session.id,
+            "interruption59": interrupted.id,
+        },
+        "clock": clock,
+    }
 
 
 class AudioProbe(FrameProcessor):
@@ -211,6 +320,21 @@ def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
             }
         )
         return asdict(utterance)
+
+    @control.post("/message")
+    async def message(body: dict[str, Any]) -> dict[str, bool]:
+        resources = app.state.resources
+        if resources.sessions.live is None:
+            raise HTTPException(409, "没有活动测试连接")
+        data = body.get("message")
+        if not isinstance(data, dict):
+            raise HTTPException(400, "需要测试消息对象")
+        await resources.sessions.push(data)
+        return {"sent": True}
+
+    @control.post("/seed-localization")
+    async def localization() -> dict[str, Any]:
+        return await seed_localization(store)
 
     # 放在生产静态站点之前；生产 create_app 从未挂载这些路由。
     app.router.routes.insert(0, Mount("/__test", app=control))
