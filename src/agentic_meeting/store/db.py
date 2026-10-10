@@ -26,8 +26,10 @@ from typing import Any
 
 import aiosqlite
 import sqlite_vec
+from loguru import logger
 
 from agentic_meeting.config import RetentionConfig
+from agentic_meeting.messages import reference, validate_reference
 from agentic_meeting.store.work import drain_io
 from agentic_meeting.types import (
     SPEAKER_ASSISTANT,
@@ -156,6 +158,7 @@ class Store:
             "utterances": [("write_token", "TEXT NOT NULL DEFAULT ''")],
             "frames": [("write_token", "TEXT NOT NULL DEFAULT ''")],
             "reports": [
+                ("error_message_json", "TEXT"),
                 ("write_token", "TEXT NOT NULL DEFAULT ''"),
                 ("finished_at", "REAL"),
             ],
@@ -1317,6 +1320,10 @@ class Store:
 
     @staticmethod
     def _report(row: aiosqlite.Row) -> Report:
+        try:
+            message = json.loads(row["error_message_json"]) if row["error_message_json"] else None
+        except (ValueError, TypeError, RecursionError):
+            message = None
         return Report(
             id=row["id"],
             session_id=row["session_id"],
@@ -1327,6 +1334,7 @@ class Store:
             error=row["error"],
             write_token=row["write_token"],
             finished_at=row["finished_at"],
+            error_message=validate_reference(message, ("report.failure.",)),
         )
 
     async def create_report(
@@ -1361,7 +1369,7 @@ class Store:
             if await self._identity("reports", report_id, session_id, write_token) is None:
                 return False
             await self._db.execute(
-                "UPDATE reports SET status = 'done', text_md = ?, error = NULL, finished_at = ? WHERE id = ?",
+                "UPDATE reports SET status = 'done', text_md = ?, error = NULL, error_message_json = NULL, finished_at = ? WHERE id = ?",
                 (text_md, time.time() if now is None else now, report_id),
             )
             await self._db.commit()
@@ -1375,24 +1383,36 @@ class Store:
         session_id: str | None = None,
         write_token: str | None = None,
         now: float | None = None,
+        error_message: dict | None = None,
     ) -> bool:
+        message = validate_reference(error_message, ("report.failure.",))
         async with self._transaction():
             row = await self._identity("reports", report_id, session_id, write_token)
             if row is None or row["status"] != "running":
                 return False
             await self._db.execute(
-                "UPDATE reports SET status = 'failed', error = ?, finished_at = ? WHERE id = ?",
-                (error, time.time() if now is None else now, report_id),
+                "UPDATE reports SET status = 'failed', error = ?, error_message_json = ?, finished_at = ? WHERE id = ?",
+                (
+                    error,
+                    json.dumps(message, ensure_ascii=False) if message is not None else None,
+                    time.time() if now is None else now,
+                    report_id,
+                ),
             )
             await self._db.commit()
         return True
 
-    async def fail_running_reports(self, reason: str) -> int:
+    async def fail_running_reports(self, reason: str, *, error_message: dict | None = None) -> int:
         """服务启动时调用：上次没生成完的报告标为失败。返回条数。"""
+        message = validate_reference(error_message, ("report.failure.",))
         async with self._transaction():
             cursor = await self._db.execute(
-                "UPDATE reports SET status = 'failed', error = ?, finished_at = ? WHERE status = 'running'",
-                (reason, time.time()),
+                "UPDATE reports SET status = 'failed', error = ?, error_message_json = ?, finished_at = ? WHERE status = 'running'",
+                (
+                    reason,
+                    json.dumps(message, ensure_ascii=False) if message is not None else None,
+                    time.time(),
+                ),
             )
             await self._db.commit()
             return cursor.rowcount
@@ -1540,11 +1560,33 @@ class Store:
         """把还在排队或运行中的任务一律标为失败（服务重启后调用：它们的执行已经不在了）。返回条数。"""
         now = time.time() if now is None else now
         async with self._transaction():
+            unfinished = await self._all(
+                "SELECT id FROM tasks WHERE status IN ('queued', 'running')"
+            )
             cursor = await self._db.execute(
                 "UPDATE tasks SET status = 'failed', error = ?, finished_at = ? "
                 "WHERE status IN ('queued', 'running')",
                 (reason, now),
             )
+            for row in unfinished:
+                payload = {
+                    "message": reference("task.event.failed"),
+                    "task_status": "failed",
+                    "task_finished_at": now,
+                    "error_message": reference("task.failure.restart"),
+                }
+                try:
+                    await self._db.execute(
+                        "INSERT INTO task_events (task_id, at, kind, summary, payload_json) VALUES (?, ?, 'status', ?, ?)",
+                        (
+                            row["id"],
+                            now,
+                            f"失败：{reason}",
+                            json.dumps(payload, ensure_ascii=False),
+                        ),
+                    )
+                except Exception:
+                    logger.exception("记录恢复任务的来源失败，保留已更新状态")
             await self._db.commit()
             return cursor.rowcount
 
@@ -1587,14 +1629,20 @@ class Store:
             rows = await self._all(
                 "SELECT * FROM task_events WHERE task_id = ? ORDER BY id", (task_id,)
             )
-        return [
-            TaskEvent(
-                r["id"],
-                r["task_id"],
-                r["at"],
-                r["kind"],
-                r["summary"],
-                json.loads(r["payload_json"]) if r["payload_json"] else None,
+        events = []
+        for r in rows:
+            try:
+                payload = json.loads(r["payload_json"]) if r["payload_json"] else None
+            except (ValueError, TypeError, RecursionError):
+                payload = None
+            events.append(
+                TaskEvent(
+                    r["id"],
+                    r["task_id"],
+                    r["at"],
+                    r["kind"],
+                    r["summary"],
+                    payload,
+                )
             )
-            for r in rows
-        ]
+        return events

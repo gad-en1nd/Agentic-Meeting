@@ -26,10 +26,10 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agentic_meeting.config import AppConfig, secret
+from agentic_meeting.messages import error_body, http_error
 
 COOKIE_NAME = "am_session"
 CSRF_HEADER = "X-CSRF-Token"
@@ -267,27 +267,29 @@ def register(app: FastAPI, guard: AuthGuard | None) -> None:
     @app.post("/api/auth/login")
     async def login(request: Request) -> JSONResponse:
         if guard is None:
-            raise StarletteHTTPException(404, NOT_ENABLED)
+            raise http_error(404, "error.auth.disabled")
         address = _client_address(request)
         wait = guard.limiter.retry_after(address)
         if wait > 0:
             return JSONResponse(
-                {"error": TOO_MANY}, status_code=429, headers={"Retry-After": str(int(wait) + 1)}
+                error_body("error.auth.rate_limited"),
+                status_code=429,
+                headers={"Retry-After": str(int(wait) + 1)},
             )
         raw = await _read_body_limited(request, MAX_LOGIN_BODY_BYTES)
         if raw is None:
-            return JSONResponse({"error": TOO_LARGE}, status_code=413)
+            return JSONResponse(error_body("error.auth.body_too_large"), status_code=413)
         try:
             body = json.loads(raw)
         except ValueError:
             body = None
         password = body.get("password") if isinstance(body, dict) else None
         if not isinstance(password, str):
-            raise StarletteHTTPException(400, '请求体应为 {"password": "..."}')
+            raise http_error(400, "error.auth.body_invalid")
         if not await guard.check_password_async(password):
             guard.limiter.failed(address)
             logger.warning(f"登录失败：{address}")
-            return JSONResponse({"error": WRONG_PASSWORD}, status_code=401)
+            return JSONResponse(error_body("error.auth.wrong_password"), status_code=401)
         guard.limiter.succeeded(address)
         cookie, csrf = guard.issue()
         response = JSONResponse(_status(enabled=True, csrf_token=csrf))
@@ -346,11 +348,11 @@ class LoginRequired:
             return
         nonce = self.guard.verify(request.cookies.get(COOKIE_NAME))
         if nonce is None:
-            response = JSONResponse({"error": NEED_LOGIN}, status_code=401)
+            response = JSONResponse(error_body("error.auth.required"), status_code=401)
         elif method not in SAFE_METHODS and not self.guard.csrf_ok(
             nonce, request.headers.get(CSRF_HEADER)
         ):
-            response = JSONResponse({"error": BAD_CSRF}, status_code=403)
+            response = JSONResponse(error_body("error.auth.csrf"), status_code=403)
         else:
             await self.app(scope, receive, send)
             return

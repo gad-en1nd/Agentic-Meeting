@@ -186,6 +186,8 @@ class TaskResult:
     sources: list[str] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)  # 相对 data_dir 的文件路径
 
+    brief_message: dict | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class Digest:
@@ -213,3 +215,4 @@ class Report:
     error: str | None = None
     write_token: str = ""
     finished_at: float | None = None
+    error_message: dict | None = None

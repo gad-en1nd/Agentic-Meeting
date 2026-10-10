@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS reports (
     provider    TEXT NOT NULL DEFAULT '',
     text_md     TEXT NOT NULL DEFAULT '',
     error       TEXT,
+    error_message_json TEXT,
     write_token TEXT NOT NULL DEFAULT '',
     finished_at REAL
 );

@@ -36,6 +36,7 @@ from agentic_meeting.agent.sandbox import (
 )
 from agentic_meeting.agent.tasks import OnEvent, RunnerError, task_dir
 from agentic_meeting.config import AppConfig, MCPServerConfig, SandboxConfig, secret
+from agentic_meeting.messages import reference
 from agentic_meeting.pipeline.clock import context_line, format_hms
 from agentic_meeting.screen.ingest import media_type_of
 from agentic_meeting.store.db import Store
@@ -142,7 +143,11 @@ def parse_result(text: Any) -> TaskResult:
         or not isinstance(data.get("brief"), str)
         or not data["brief"].strip()
     ):
-        return TaskResult(brief=FALLBACK_BRIEF, detail_md=raw.strip())
+        return TaskResult(
+            brief=FALLBACK_BRIEF,
+            brief_message=reference("task.result.fallback"),
+            detail_md=raw.strip(),
+        )
     detail = data.get("detail_md")
     artifacts = [n for a in _string_list(data.get("artifacts")) if (n := safe_artifact_name(a))]
     return TaskResult(
@@ -182,12 +187,26 @@ def describe_tool_call(name: str, arguments: Any, *, server: str | None = None) 
     if server:
         payload["server"] = server
     if name in SANDBOX_TOOL_SUMMARIES:
+        payload["message"] = reference(
+            "task.sandbox."
+            + {
+                "exec_command": "exec",
+                "write_stdin": "input",
+                "apply_patch": "write",
+                "view_image": "image",
+            }[name]
+        )
         return SANDBOX_TOOL_SUMMARIES[name][0], payload
     for key in QUERY_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             verb = "正在打开" if key == "url" else "正在检索"
+            key_name = "url" if key == "url" else "query"
+            payload["message"] = reference(
+                "task.tool.open" if key == "url" else "task.tool.search", {key_name: _clip(value)}
+            )
             return f"{verb}「{_clip(value)}」", payload
+    payload["message"] = reference("task.tool.call", {"name": _clip(name) or "工具"})
     return f"正在调用工具 {_clip(name)}", payload
 
 
@@ -199,13 +218,26 @@ def describe_tool_output(name: str, output: Any) -> tuple[str, dict]:
     payload = {"tool": name, "chars": len(text)}
     if name in SANDBOX_TOOL_SUMMARIES:
         if "timed out" in text:
+            payload["message"] = reference("task.tool.code_timeout")
             return "代码运行超时", payload
+        payload["message"] = reference(
+            "task.sandbox."
+            + {
+                "exec_command": "exec_done",
+                "write_stdin": "input_done",
+                "apply_patch": "write_done",
+                "view_image": "image_done",
+            }[name]
+        )
         return SANDBOX_TOOL_SUMMARIES[name][1], payload
     if not text.strip():
+        payload["message"] = reference("task.tool.empty")
         return "工具没有返回内容", payload
     lowered = text[:200].lower()
     if lowered.startswith(("error", "an error occurred")) or '"error"' in lowered:
+        payload["message"] = reference("task.tool.error")
         return "工具返回了错误", payload
+    payload["message"] = reference("task.tool.result", {"chars": len(text)})
     return f"工具返回了结果（约 {len(text)} 字）", payload
 
 
@@ -288,16 +320,19 @@ class AgentRunner:
     async def __call__(self, task: TaskRecord, on_event: OnEvent) -> TaskResult:
         agent_cfg = self._cfg.agent
         if not agent_cfg.enabled:
-            raise RunnerError("后台任务功能已在配置里关闭")
+            raise RunnerError("后台任务功能已在配置里关闭", "task.failure.disabled")
         if self._client is None and not (agent_cfg.base_url and agent_cfg.model):
             raise RunnerError(
-                "后台 agent 还没有配置（config.toml 的 [agent] 里要填模型地址和名字）"
+                "后台 agent 还没有配置（config.toml 的 [agent] 里要填模型地址和名字）",
+                "task.failure.not_configured",
             )
         try:
             from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, RunConfig, Runner
             from agents.exceptions import AgentsException, MaxTurnsExceeded
         except ImportError as e:
-            raise RunnerError("没有安装后台 agent 的依赖（uv sync --extra agent）") from e
+            raise RunnerError(
+                "没有安装后台 agent 的依赖（uv sync --extra agent）", "task.failure.dependency"
+            ) from e
         import openai
 
         owned = OwnedFiles(self._data_dir)
@@ -384,16 +419,26 @@ class AgentRunner:
                 result.cancel()  # 任务被取消或超时：让 SDK 把在途的模型请求和工具调用停掉
                 raise
             except MaxTurnsExceeded as e:
-                raise RunnerError(f"步骤太多（超过 {agent_cfg.max_turns} 步）还没有做完") from e
+                raise RunnerError(
+                    f"步骤太多（超过 {agent_cfg.max_turns} 步）还没有做完",
+                    "task.failure.turn_limit",
+                    {"maxTurns": agent_cfg.max_turns},
+                ) from e
             except openai.AuthenticationError as e:
-                raise RunnerError(self._key_problem()) from e
+                raise RunnerError(self._key_problem(), "task.failure.auth") from e
             except openai.APIConnectionError as e:
-                raise RunnerError("连不上远端模型") from e
+                raise RunnerError("连不上远端模型", "task.failure.connection") from e
             except openai.APIStatusError as e:
-                raise RunnerError(f"远端模型返回了错误（{e.status_code}）") from e
+                raise RunnerError(
+                    f"远端模型返回了错误（{e.status_code}）",
+                    "task.failure.remote_status",
+                    {"status": e.status_code},
+                ) from e
             except AgentsException as e:
                 logger.warning(f"agent 运行出错：{type(e).__name__}: {e}")
-                raise RunnerError(f"agent 运行出错（{type(e).__name__}）") from e
+                raise RunnerError(
+                    f"agent 运行出错（{type(e).__name__}）", "task.failure.runtime"
+                ) from e
 
             parsed = parse_result(result.final_output)
             if parsed.artifacts and sandbox is not None:
@@ -449,7 +494,14 @@ class AgentRunner:
         try:
             return await stack.enter_async_context(self._open_sandbox(self._cfg.agent.sandbox))
         except SandboxUnavailable as e:
-            await on_event("note", f"{e}，这次只能检索和读图", None)
+            await on_event(
+                "note",
+                f"{e}，这次只能检索和读图",
+                {
+                    "message": reference("task.sandbox.unavailable"),
+                    "diagnostic": " ".join(str(e).split())[:200],
+                },
+            )
             notes.append(
                 f"这次没有代码执行环境（{e}）：不能运行代码、不能生成文件。需要计算或画图的部分请如实说明做不了。"
             )
@@ -482,7 +534,14 @@ class AgentRunner:
                 reason = root_cause(e)
                 logger.warning(f"MCP 服务器 {server_cfg.name}（{server_cfg.url}）连不上：{reason}")
                 await on_event(
-                    "note", f"检索服务 {server_cfg.name} 连不上（{reason}），这次不用它", None
+                    "note",
+                    f"检索服务 {server_cfg.name} 连不上（{reason}），这次不用它",
+                    {
+                        "message": reference(
+                            "task.mcp.unavailable", {"name": _clip(server_cfg.name) or "检索"}
+                        ),
+                        "diagnostic": reason[:200],
+                    },
                 )
                 notes.append(f"检索服务 {server_cfg.name} 这次不可用。")
                 try:

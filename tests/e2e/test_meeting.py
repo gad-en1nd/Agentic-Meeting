@@ -16,6 +16,7 @@ async def test_speech_is_transcribed_stored_and_exported(app, http, meeting, inf
     assert session["resumed"] is False and session["base_secs"] == 0
     notice = await client.next_message("notice", level="info")
     assert "正在转录" in notice["text"]
+    assert notice["code"] == "notice.recording" and notice["params"] == {}
 
     inference.asr.say("我们先看一下上周的实验结果")
     await client.speak()
@@ -124,6 +125,7 @@ async def test_typed_question_is_answered_in_text_only(app, http, meeting, infer
     client.type_text("   ")
     warning = await client.next_message("notice", level="warn")
     assert warning["text"]
+    assert warning["code"] == "notice.text.empty"
 
 
 async def test_a_second_device_takes_over_the_meeting(app, http, meeting, inference):

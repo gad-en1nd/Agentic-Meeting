@@ -239,7 +239,7 @@ class SessionManager:
         self,
         live: LiveConnection,
         build: Callable[[], Awaitable[Diarizer]],
-        notice: Callable[[str, str], Awaitable[None]] | None = None,
+        notice: Callable[[str, str, dict | None], Awaitable[None]] | None = None,
     ) -> Diarizer:
         """这路连接用的说话人区分。
 
@@ -262,7 +262,7 @@ class SessionManager:
             except Exception:
                 logger.exception("读取已有的说话人编号失败，新流的编号不加偏移")
             if offset > 0 and notice is not None:
-                await notice("info", RENUMBERED_NOTICE)
+                await notice("info", "notice.diar.renumbered", None)
         stream = SessionDiarizer(inner, session_id=live.session.id, speaker_offset=offset)
         stream.begin_connection(live.base_secs)
         self._stream = stream

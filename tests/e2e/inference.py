@@ -33,6 +33,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.requests import ClientDisconnect
 
 VOICED_RMS = 300  # 识别窗口的 RMS 超过它才算有人说话（16 位采样）
 CHARS_PER_SEC = 6.0  # 未收尾时每秒音频认出几个字
@@ -65,11 +66,28 @@ class FakeService:
         self.app = FastAPI()
         self.port = 0
         self.down = False
+        self.status_code = 0
+        self.delay_secs = 0.0
         self.requests: list[dict[str, Any]] = []
+        self.started_requests: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
         @self.app.middleware("http")
         async def gate(request: Request, call_next: Callable) -> Response:
+            if request.url.path not in ("/health", "/v1/models"):
+                if self.delay_secs:
+                    try:
+                        body = await request.json()
+                    except (ValueError, ClientDisconnect):
+                        return Response(status_code=499)
+                    with self._lock:
+                        self.started_requests.append(body)
+                    await asyncio.sleep(self.delay_secs)
+                if self.status_code:
+                    return JSONResponse(
+                        {"error": {"message": "fake-external-diagnostic", "type": "fake_error"}},
+                        status_code=self.status_code,
+                    )
             if self.down:
                 return JSONResponse({"error": f"{self.name} 已停止"}, status_code=503)
             return await call_next(request)
@@ -224,10 +242,59 @@ class FakeEmbedding(FakeService):
             }
 
 
+class FakeMCP(FakeService):
+    """最小的真实 streamable HTTP MCP 服务，SDK 完成协议与工具调用。"""
+
+    def __init__(self) -> None:
+        super().__init__("检索服务")
+
+        @self.app.post("/mcp")
+        async def rpc(request: Request) -> Response:
+            body = await request.json()
+            self.record(body)
+            if "id" not in body:
+                return Response(status_code=202)
+            method = body["method"]
+            if method == "initialize":
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "fake-search", "version": "0"},
+                }
+            elif method == "tools/list":
+                result = {
+                    "tools": [
+                        {
+                            "name": "search",
+                            "description": "检索虚构资料",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string"},
+                                    "private": {"type": "string"},
+                                    "message": {"type": "object"},
+                                },
+                                "required": ["query"],
+                            },
+                        }
+                    ]
+                }
+            elif method == "tools/call":
+                result = {"content": [{"type": "text", "text": "虚构检索结果"}], "isError": False}
+            else:
+                result = {}
+            return JSONResponse({"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+        @self.app.delete("/mcp")
+        async def disconnect() -> Response:
+            return Response(status_code=204)
+
+
 class Inference:
     """全部假服务，跑在后台线程自己的事件循环里，不受测试的事件循环阻塞影响。"""
 
     def __init__(self) -> None:
+        self.mcp = FakeMCP()
         self.asr = FakeASR()
         self.llm = FakeModel("实时模型", "好的。")
         self.agent = FakeModel(
@@ -242,7 +309,7 @@ class Inference:
 
     @property
     def services(self) -> list[FakeService]:
-        return [self.asr, self.llm, self.agent, self.tts, self.embedding]
+        return [self.asr, self.llm, self.agent, self.tts, self.embedding, self.mcp]
 
     def start(self) -> None:
         self._thread.start()
@@ -272,8 +339,11 @@ class Inference:
         """每个测试开始前：清掉规则、台词、请求记录，全部恢复在线。"""
         for service in self.services:
             service.down = False
+            service.status_code = 0
+            service.delay_secs = 0.0
             with service._lock:
                 service.requests.clear()
+                service.started_requests.clear()
         with self.asr._lock:
             self.asr.lines.clear()
             self.asr.current = None

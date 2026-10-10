@@ -107,6 +107,14 @@ async def test_delegated_task_runs_in_the_background_and_reports_back(
     assert "学习率 0.003" in detail["detail_md"]
     assert detail["outbound"]["goal"] == "整理基线的超参数"
     assert detail["events"]
+    terminal = detail["events"][-1]
+    assert terminal["message"] == {"code": "task.event.succeeded", "params": {}}
+    assert done["last_event"] == terminal == detail["last_event"]
+    assert done["error_message"] is None and done["brief_message"] is None
+    assert listed["items"][0]["last_event"] == terminal
+    cancelled = (await http.post(f"/api/tasks/{done['id']}/cancel")).json()
+    assert cancelled["last_event"] == terminal
+    assert "payload" not in terminal and "arguments" not in terminal
     # 结果回到实时模型，助理据此回答
     await until_sync(lambda: "已经处理" in client.bot_text(), "任务结果交回实时模型")
 
@@ -120,6 +128,13 @@ async def test_a_failing_task_is_reported_as_failed(app, http, meeting, inferenc
 
     failed = await client.next_message("task", status="failed", timeout_secs=60)
     assert failed["error"]
+    assert failed["error_message"] == {
+        "code": "task.failure.remote_status",
+        "params": {"status": 503},
+    }
+    detail = (await http.get(f"/api/tasks/{failed['id']}")).json()
+    assert detail["error_message"] == failed["error_message"]
+    assert detail["last_event"] == failed["last_event"]
     assert (await client.next_message("utterance", source="text"))["text"]
 
 

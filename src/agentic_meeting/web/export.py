@@ -24,8 +24,8 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from agentic_meeting.messages import http_error
 from agentic_meeting.pipeline.clock import format_hms
 from agentic_meeting.screen.caption import IRRELEVANT_CAPTION
 from agentic_meeting.types import (
@@ -455,19 +455,17 @@ def register(app: FastAPI) -> None:
     async def export(request: Request, name: str) -> Response:
         resources = request.app.state.resources
         if resources.store is None or resources.sessions is None:
-            raise StarletteHTTPException(503, "存储尚未就绪")
+            raise http_error(503, "error.storage.not_ready")
         stem, dot, suffix = name.rpartition(".")
         if not dot or not stem or suffix not in ("md", "json", "zip"):
-            raise StarletteHTTPException(
-                404, "导出地址的格式是 /api/export/<会议编号>.md（或 .json、.zip）"
-            )
+            raise http_error(404, "error.export.format_invalid")
         if await resources.store.get_session(stem) is not None:
             await resources.store.require_available(stem)
         data = await collect(
             resources.store, stem, live=resources.sessions.is_live(stem), now=time.time()
         )
         if data is None:
-            raise StarletteHTTPException(404, "找不到这场会议")
+            raise http_error(404, "error.session.not_found")
         title = export_title(data.summary)
         if suffix == "md":
             return Response(

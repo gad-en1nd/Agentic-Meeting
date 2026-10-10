@@ -58,7 +58,7 @@ class TextInputHandler:
         *,
         recorder: TypedRecorder,
         push: Callable[[Frame], Awaitable[None]],
-        notice: Callable[[str, str], Awaitable[None]],
+        notice: Callable[[str, str, dict | None], Awaitable[None]],
         tts_enabled: bool,
         max_queued: int = MAX_QUEUED,
         max_chars: int = MAX_TEXT_CHARS,
@@ -122,13 +122,13 @@ class TextInputHandler:
         """处理一条浏览器发来的文字。"""
         text = raw.strip()
         if not text:
-            await self._warn("消息是空的，没有发送")
+            await self._safe_notice("warn", "notice.text.empty")
             return
         if len(text) > self._max_chars:
-            await self._warn(f"消息太长（最多 {self._max_chars} 字），没有发送")
+            await self._safe_notice("warn", "notice.text.too_long", {"max": self._max_chars})
             return
         if self.busy and len(self._queue) >= self._max_queued:
-            await self._warn(f"助理正忙，排队已满（{self._max_queued} 条），这条消息没有发送")
+            await self._safe_notice("warn", "notice.text.queue_full", {"max": self._max_queued})
             return
 
         utterance = await self._recorder.record_typed(text)  # 立刻落库并显示在字幕里
@@ -138,7 +138,7 @@ class TextInputHandler:
             if self.busy or self._queue:
                 self._queue.append(utterance)
                 position = len(self._queue)
-                await self._info(f"助理正忙，这条消息排在第 {position} 位，稍后回答")
+                await self._safe_notice("info", "notice.text.queued", {"position": position})
                 return
             await self._dispatch(utterance)
 
@@ -188,14 +188,8 @@ class TextInputHandler:
             self._tools = False
             await self.set_generating(False)
 
-    async def _warn(self, text: str) -> None:
-        await self._safe_notice("warn", text)
-
-    async def _info(self, text: str) -> None:
-        await self._safe_notice("info", text)
-
-    async def _safe_notice(self, level: str, text: str) -> None:
+    async def _safe_notice(self, level: str, code: str, params: dict | None = None) -> None:
         try:
-            await self._notice(level, text)
+            await self._notice(level, code, params)
         except Exception:
             logger.exception("发送提示失败")

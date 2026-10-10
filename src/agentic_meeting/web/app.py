@@ -33,6 +33,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from agentic_meeting.agent.runner import build_runner
 from agentic_meeting.agent.tasks import RESTART_REASON, Runner, TaskManager
 from agentic_meeting.config import REPO_ROOT, AppConfig, secret
+from agentic_meeting.messages import error_body, http_error, validate_reference
 from agentic_meeting.pipeline.background import BackgroundModel, InferenceLLM
 from agentic_meeting.pipeline.bot import AppResources, run_bot
 from agentic_meeting.pipeline.digest import DigestWorker
@@ -326,22 +327,35 @@ def create_app(
     app = FastAPI(title="组会助理", lifespan=lifespan)
     health_api.register(app, cfg)
 
-    # ---- 错误统一成 {"error": "..."} ----
+    # ---- 受控错误保留旧客户端的中文字段 ----
 
     @app.exception_handler(SessionBusy)
     async def session_busy(_request: Request, _exc: SessionBusy) -> JSONResponse:
-        return JSONResponse({"error": "会议正在处理或等待删除，请稍后重试"}, status_code=409)
+        return JSONResponse(error_body("error.session.busy"), status_code=409)
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        message = exc.detail if isinstance(exc.detail, str) and exc.detail != "Not Found" else None
-        if exc.status_code == 404 and message is None:
-            message = "没有这个接口或页面"
-        return JSONResponse({"error": message or "请求失败"}, status_code=exc.status_code)
+    async def http_exception(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        ref = validate_reference(
+            {"code": detail.get("code"), "params": detail.get("params", {})}, ("error.",)
+        )
+        body = (
+            error_body(**ref)
+            if ref
+            else error_body(
+                "error.request.not_found" if exc.status_code == 404 else "error.request.failed"
+            )
+        )
+        return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_request(_request: Request, exc: RequestValidationError) -> JSONResponse:
-        return JSONResponse({"error": f"请求格式有误：{exc.errors()[:1]}"}, status_code=422)
+    async def invalid_request(_request: Request, _exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(error_body("error.request.invalid"), status_code=422)
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(_request: Request, exc: Exception) -> JSONResponse:
+        logger.opt(exception=exc).error("HTTP 请求失败")
+        return JSONResponse(error_body("error.request.failed"), status_code=500)
 
     # ---- 访问口令（interfaces.md §5.7）：启用时拦住除登录以外的全部 /api ----
 
@@ -382,16 +396,16 @@ def create_app(
                 raise ValueError("请求体必须是 JSON 对象")
             request = SmallWebRTCRequest.from_dict(payload)
         except (ValueError, TypeError) as e:
-            raise StarletteHTTPException(400, f"WebRTC 请求格式有误：{e}") from e
+            raise http_error(400, "error.connection.offer_invalid") from e
         if isinstance(request.request_data, dict) and "session_id" in request.request_data:
             # 继续一场会议：协商之前就校验，找不到直接 404，而不是悄悄新建一场（interfaces.md §5.2）。
             wanted = request.request_data["session_id"]
             if wanted is not None:
                 store_ = http_request.app.state.resources.store
                 if not isinstance(wanted, str) or not wanted.strip():
-                    raise StarletteHTTPException(400, "session_id 必须是非空的字符串")
+                    raise http_error(400, "error.session.id_invalid")
                 if store_ is None or await store_.get_session(wanted.strip()) is None:
-                    raise StarletteHTTPException(404, sessions_api.NOT_FOUND_SESSION)
+                    raise http_error(404, "error.session.not_found")
                 await store_.require_available(wanted.strip())
 
         async def on_connection(connection: Any) -> None:

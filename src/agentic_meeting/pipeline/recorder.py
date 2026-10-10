@@ -57,6 +57,7 @@ from agentic_meeting.diar.fusion import (
     join_fragments,
     should_merge,
 )
+from agentic_meeting.messages import notice_message
 from agentic_meeting.pipeline.clock import SessionClock, context_line
 from agentic_meeting.store.db import default_speaker_name
 from agentic_meeting.types import (
@@ -391,8 +392,8 @@ class MeetingRecorder(FrameProcessor):
     async def _send(self, data: dict) -> None:
         await self.push_frame(RTVIServerMessageFrame(data=data))
 
-    async def _notice(self, level: str, text: str) -> None:
-        await self._send({"type": "notice", "level": level, "text": text})
+    async def _notice(self, level: str, code: str, params: dict | None = None) -> None:
+        await self._send(notice_message(level, code, params))
 
     # ------------------------------------------------------------------ #
     # 音频与说话人区分
@@ -437,12 +438,10 @@ class MeetingRecorder(FrameProcessor):
                 await self._diarizer.push_audio(chunk)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+            except Exception:
                 self._diar_failed = True
                 logger.exception("说话人区分出错，之后的发言不再区分说话人")
-                await self._guard(
-                    self._notice("warn", f"说话人区分出错，之后的发言将记为「未知」：{e}")
-                )
+                await self._guard(self._notice("warn", "notice.diar.failed"))
 
     async def _segments(self, since_secs: float) -> list[SpeakerSegment]:
         if self._diarizer is None or self._diar_failed or isinstance(self._diarizer, NullDiarizer):

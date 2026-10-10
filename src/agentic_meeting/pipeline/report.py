@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 from loguru import logger
 
+from agentic_meeting.messages import reference
 from agentic_meeting.pipeline.background import Preempted
 from agentic_meeting.pipeline.clock import format_hms
 from agentic_meeting.screen.caption import IRRELEVANT_CAPTION
@@ -54,6 +55,14 @@ class ReportBusy(RuntimeError):
 
 class ReportUnavailable(RuntimeError):
     """没有可用的模型，生成不了报告。"""
+
+
+class ReportFailure(ValueError):
+    """本模块自己判断的失败，不用异常原文反推来源。"""
+
+    def __init__(self, reason: str, code: str) -> None:
+        super().__init__(reason)
+        self.message = reference(code)
 
 
 class ReportModel(Protocol):
@@ -204,7 +213,8 @@ def failure_reason(error: BaseException) -> str:
     text = " ".join(str(error).split())
     if len(text) > 200:
         text = text[:200] + "…"
-    return f"{type(error).__name__}: {text}" if text else type(error).__name__
+    name = "ValueError" if isinstance(error, ReportFailure) else type(error).__name__
+    return f"{name}: {text}" if text else name
 
 
 # --------------------------------------------------------------------------- #
@@ -262,7 +272,9 @@ class ReportWorker:
 
     async def recover(self) -> int:
         """服务启动时调用：上次没生成完的报告标为失败。"""
-        return await self._store.fail_running_reports(INTERRUPTED_REASON)
+        return await self._store.fail_running_reports(
+            INTERRUPTED_REASON, error_message=reference("report.failure.interrupted")
+        )
 
     async def stop(self) -> None:
         self._closing = True
@@ -278,7 +290,9 @@ class ReportWorker:
             except (asyncio.CancelledError, Exception):
                 pass
         for sid, (report_id, token) in identities.items():
-            await self._mark_failed(sid, report_id, token, INTERRUPTED_REASON)
+            await self._mark_failed(
+                sid, report_id, token, INTERRUPTED_REASON, reference("report.failure.interrupted")
+            )
 
     async def wait(self, session_id: str) -> None:
         """等这场会议正在生成的那份报告结束（测试用）。"""
@@ -338,19 +352,43 @@ class ReportWorker:
                     )
             except asyncio.CancelledError:
                 await drain_io(
-                    self._mark_failed(session_id, report_id, write_token, INTERRUPTED_REASON)
+                    self._mark_failed(
+                        session_id,
+                        report_id,
+                        write_token,
+                        INTERRUPTED_REASON,
+                        reference("report.failure.interrupted"),
+                    )
                 )
                 raise
             except Exception as exc:
                 logger.warning("会后报告生成失败：{}", type(exc).__name__)
-                await self._mark_failed(session_id, report_id, write_token, failure_reason(exc))
+                message = (
+                    exc.message
+                    if isinstance(exc, ReportFailure)
+                    else reference(
+                        "report.failure.timeout"
+                        if isinstance(exc, TimeoutError)
+                        else "report.failure.no_model"
+                        if isinstance(exc, ReportUnavailable)
+                        else "report.failure.unknown"
+                    )
+                )
+                await self._mark_failed(
+                    session_id, report_id, write_token, failure_reason(exc), message
+                )
 
     async def _mark_failed(
-        self, session_id: str, report_id: int, write_token: str, reason: str
+        self, session_id: str, report_id: int, write_token: str, reason: str, error_message: dict
     ) -> None:
         try:
             await self._store.fail_report(
-                report_id, reason, session_id=session_id, write_token=write_token, now=self._now()
+                report_id,
+                reason,
+                session_id=session_id,
+                write_token=write_token,
+                now=self._now(),
+                error_message=error_message,
             )
         except Exception as exc:
             logger.warning("把报告标为失败时出错：{}", type(exc).__name__)
@@ -362,10 +400,10 @@ class ReportWorker:
         await self._final_digest(session_id)
         summary = await self._store.get_summary(session_id)
         if summary is None:
-            raise ValueError("找不到这场会议")
+            raise ReportFailure("找不到这场会议", "report.failure.session_missing")
         utterances = await self._store.all_utterances(session_id)
         if not utterances:
-            raise ValueError("这场会议没有发言记录，写不出报告")
+            raise ReportFailure("这场会议没有发言记录，写不出报告", "report.failure.no_transcript")
         frames = await self._store.list_frames(session_id)
         attached: list[ScreenFrame] = []  # 附在最后那一次请求上的截图
         tasks = await self._store.list_tasks(session_id)

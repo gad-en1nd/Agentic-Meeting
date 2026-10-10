@@ -114,6 +114,7 @@ async def start_app(inference: Inference, tmp_path: Path) -> AsyncIterator[Start
         overrides: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
         data_dir: Path | None = None,
+        report_timeout_secs: float | None = None,
     ) -> App:
         nonlocal count
         count += 1
@@ -132,13 +133,15 @@ async def start_app(inference: Inference, tmp_path: Path) -> AsyncIterator[Start
             "PYTHONUTF8": "1",
             **(env or {}),
         }
+        command = [sys.executable, "-m", "agentic_meeting.cli"]
+        if report_timeout_secs is not None:
+            command = [sys.executable, str(Path(__file__).with_name("server.py"))]
+            process_env["E2E_REPORT_TIMEOUT_SECS"] = str(report_timeout_secs)
         with log.open("wb") as out:
             process = await asyncio.to_thread(
                 subprocess.Popen,
                 [
-                    sys.executable,
-                    "-m",
-                    "agentic_meeting.cli",
+                    *command,
                     "--config",
                     str(config_path),
                     "serve",

@@ -26,6 +26,8 @@ async def test_transcription_survives_failing_assistant_services(app, http, meet
         "提示助理暂不可用",
     )
 
+    notice = await client.next_message("notice", code="notice.llm.server")
+    assert notice["params"] == {"status": 503}
     inference.asr.say("模型挂了字幕还在继续")
     await client.speak()
     assert (await client.next_message("utterance", text="模型挂了字幕还在继续"))["id"]
@@ -62,6 +64,8 @@ async def test_captions_resume_after_the_recognition_service_comes_back(
     await until(not_ready, "识别服务不通时就绪检查失败")
     await client.speak()  # 这段话识别不了，但连接和会议照常
 
+    unavailable = await client.next_message("notice", code="notice.asr.unavailable")
+    assert unavailable["params"] == {}
     inference.asr.down = False
     assert (await http.get("/healthz")).json() == {"status": "ok"}
 
@@ -71,6 +75,7 @@ async def test_captions_resume_after_the_recognition_service_comes_back(
         return [u for u in client.of_type("utterance") if u["text"] == "识别服务回来了"]
 
     await until(recovered, "识别恢复后出字幕", timeout_secs=90)
+    assert (await client.next_message("notice", code="notice.asr.recovered"))["params"] == {}
 
     async def ready():  # 就绪检查的服务状态有几秒缓存，刚恢复时可能还是旧结果
         return (await http.get("/readyz")).status_code == 200
