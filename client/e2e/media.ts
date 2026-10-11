@@ -10,6 +10,14 @@ export function installMedia({ nativeAudio = false } = {}) {
     screenMode: "share" as "share" | "cancel" | "fail",
     /** 每次 getDisplayMedia 调用时页面是否处于用户手势中（Safari 只在手势里允许共享）。 */
     displayCalls: [] as (boolean | null)[],
+    micDenied: false,
+    screenPending: false,
+    screenResolvers: [] as (() => void)[],
+    releaseScreen: () => media.screenResolvers.shift()?.(),
+    localChange: false,
+    changeScreenLocally: () => {
+      media.localChange = true;
+    },
     changeScreen: () => {
       color = "#f1d234";
     },
@@ -32,6 +40,7 @@ export function installMedia({ nativeAudio = false } = {}) {
   Object.assign(window, { e2eMedia: media });
   const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   navigator.mediaDevices.getUserMedia = async (constraints) => {
+    if (media.micDenied) throw new DOMException("测试麦克风授权被拒绝", "NotAllowedError");
     if (nativeAudio) {
       const stream = await getUserMedia(constraints);
       tracks.push(...stream.getTracks());
@@ -70,6 +79,11 @@ export function installMedia({ nativeAudio = false } = {}) {
     const paint = () => {
       context.fillStyle = color;
       context.fillRect(0, 0, 640, 360);
+      if (media.localChange) {
+        context.fillStyle = "white";
+        context.font = "48px sans-serif";
+        context.fillText("更新", 20, 60);
+      }
     };
     paint();
     const stream = canvas.captureStream(10);
@@ -91,6 +105,9 @@ export function installMedia({ nativeAudio = false } = {}) {
         stop();
       };
     }
+    // 原生选择器等待期间，用户仍能结束会议；交付的仍是原生视频轨道。
+    if (media.screenPending)
+      await new Promise<void>((resolve) => media.screenResolvers.push(resolve));
     return stream;
   };
 }

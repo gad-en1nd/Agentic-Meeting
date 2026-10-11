@@ -196,6 +196,24 @@ Chromium 与 WebKit 使用 CPU WebAudio 麦克风轨道，Firefox 使用浏览�
 这些检查不验证真实麦克风或屏幕授权、物理设备、模型效果、外部服务、GPU 行为或互联网 ICE 连通性。
 CI 在 Ubuntu CPU 上运行三个引擎；其他系统的平台相关浏览器启动或 ICE 故障需要定位，不能通过跳过引擎绕过。
 
+原生桌面检查可在仓库根目录运行 `uv run python -m tests.browser.server`，然后在安装版浏览器打开
+`E2E_READY` 后的 URL。这不运行 Playwright 夹具，也不替换 `getUserMedia` / `getDisplayMedia`。
+回环测试服务提供以下控制：
+
+| 测试操作                                            | 效果                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET /__test/state`                                 | 会话、peer、入站 PCM/非静音帧计数和 offer 的会话编号；不存储麦克风原始录音 |
+| `POST /__test/emit`，`{"text":"虚构字幕"}`          | 通过 RTVI 推受控字幕，不是 ASR                                             |
+| `POST /__test/disconnect`                           | 关闭真实 peer 并等待会话收尾，不结束会议                                   |
+| `POST /__test/offers`，`{"enabled":false}` / `true` | 让新 offer 返回 503 / 恢复协商，用于有限重试场景                           |
+| `POST /__test/tone`                                 | 向输出管线入队一秒低音量 440 Hz、24 kHz 单声道 PCM，不是 TTS               |
+
+这些控制只存在于 `tests/browser/server.py`，生产不挂载。先等待活动 peer，再推字幕或声音，否则返回 409。
+重连检查观察当前 peer 和入站音频，不要求又一次 RTVI client-ready：SDK 重连可能不重复发送它。
+SDK 重试与页面的五次退避是两层机制（pipecat-notes.md §12）。回环 peer 关闭不证明公网 ICE 或 NAT 连通。
+原生检查记录浏览器/系统版本、授权过程、实际图片内容、说话时电平变化以及测试音是否可听。
+三个 Playwright 引擎和合成轨道不能代替这些观察。结束时按 Ctrl+C 停止服务。
+
 失败时的 trace、截图与每个用例的 `server.log` 保存在 `client/test-results/`，HTML 报告位于
 `client/playwright-report/`。调试命令：
 

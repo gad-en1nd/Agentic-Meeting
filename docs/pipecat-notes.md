@@ -656,3 +656,12 @@ await client.disconnect();
 - Screenshots do not use the SDK's `enableScreenShare`, which would create a WebRTC video track. The
   page calls `navigator.mediaDevices.getDisplayMedia()`, draws the picture onto a `<canvas>` and
   uploads still images.
+- Browser test controls use APIs verified in the official **v1.12.0** source:
+  [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
+  exposes the real aiortc peer. Closing that peer with `await connection.pc.close()` triggers the
+  transport's closed callback and worker cleanup, without sending the intentional `peerLeft` or
+  `session_closed` messages. This exercises transport recovery rather than changing page state.
+  [`OutputAudioRawFrame`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/frames/frames.py)
+  carries 16-bit PCM, sample rate and channel count; the test bot queues it through the existing
+  pipeline worker to exercise the assistant's real remote WebRTC audio track. These controlled
+  signals do not exercise speech recognition or synthesis.

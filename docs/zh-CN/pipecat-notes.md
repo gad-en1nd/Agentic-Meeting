@@ -609,3 +609,10 @@ await client.disconnect();
   纯逻辑文件因此也能直接用 Node 运行。
 - 屏幕截图不使用 SDK 的 `enableScreenShare`（它会建立一条 WebRTC 视频轨）。
   页面直接调用 `navigator.mediaDevices.getDisplayMedia()`，把画面画到 `<canvas>` 上取静态图上传。
+- 浏览器测试控制使用官方 **v1.12.0** 源码确认的 API：
+  [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
+  是真实 aiortc peer。`await connection.pc.close()` 触发传输关闭回调和 worker 清理，不发送主动离开的
+  `peerLeft` 或 `session_closed` 消息，用于验证实际传输恢复。
+  [`OutputAudioRawFrame`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/frames/frames.py)
+  携带 16 位 PCM、采样率和声道数；测试 bot 通过已有 pipeline worker 排入音频帧，经过助理的真实远端
+  WebRTC 音轨。这些受控信号不运行语音识别或合成。

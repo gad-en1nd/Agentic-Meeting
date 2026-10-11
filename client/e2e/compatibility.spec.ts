@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { test, expect } from "./fixtures.ts";
+import { test, expect, serverReady, botAudioProbe, expectMicrophoneFlow } from "./fixtures.ts";
 
 const MIN_BROWSERS = "Chrome 111、Edge 111、Firefox 114、Safari 16.4";
 
@@ -59,7 +59,27 @@ test("能开会的浏览器不显示兼容提示", async ({ page }) => {
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("浏览器拦下助理声音时提示，点一下恢复播放", async ({ page }) => {
+test("麦克风拒绝后说明失败，恢复授权后同页能开始会议", async ({ page, request }) => {
+  await page.goto("/");
+  const start = page
+    .locator("header.topbar")
+    .getByRole("button", { name: "开始新会议", exact: true });
+  await page.evaluate(() => ((window as any).e2eMedia.micDenied = true));
+  await start.click();
+  await expect(page.locator(".notice-error")).toContainText(/麦克风不可用|连接失败/);
+  await expect(start).toBeEnabled();
+  expect(await (await request.get("/__test/state")).json()).toMatchObject({ ready: 0, live: null });
+  expect(await page.evaluate(() => (window as any).e2eMedia.tracks.length)).toBe(0);
+  await page.evaluate(() => ((window as any).e2eMedia.micDenied = false));
+  await start.click();
+  await serverReady(request, 1);
+  await expect(page.getByRole("status").first()).toHaveText("已连接");
+  await expectMicrophoneFlow(page, request);
+  await page.getByRole("button", { name: "结束会议", exact: true }).click();
+  await expect(page.getByRole("status").first()).toHaveText("未连接");
+});
+
+test("浏览器拦下助理声音时提示，点一下恢复播放", async ({ page, request }) => {
   // 模拟自动播放限制：被拦之后、用户在页面上点一下之前，有声音的 <audio> 都不让播。
   await page.addInitScript(() => {
     let policy: "idle" | "blocked" | "allowed" = "idle";
@@ -80,8 +100,12 @@ test("浏览器拦下助理声音时提示，点一下恢复播放", async ({ pa
     );
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "开始新会议", exact: true }).click();
+  await page
+    .locator("header.topbar")
+    .getByRole("button", { name: "开始新会议", exact: true })
+    .click();
   await expect(page.getByRole("status").first()).toHaveText("已连接");
+  await serverReady(request, 1);
 
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("浏览器拦下了助理的声音");
@@ -89,10 +113,20 @@ test("浏览器拦下助理声音时提示，点一下恢复播放", async ({ pa
   await expect(alert).toHaveCount(0);
   const audio = await page.locator("audio").evaluate((element: HTMLAudioElement) => ({
     paused: element.paused,
+    muted: element.muted,
+    volume: element.volume,
     tracks:
       element.srcObject instanceof MediaStream ? element.srcObject.getAudioTracks().length : 0,
   }));
-  expect(audio).toEqual({ paused: false, tracks: 1 });
+  expect(audio).toMatchObject({ paused: false, muted: false, tracks: 1 });
+  expect(audio.volume).toBeGreaterThan(0);
+  const probe = await botAudioProbe(page);
+  try {
+    expect((await request.post("/__test/tone")).ok()).toBe(true);
+    await expect.poll(probe.level, { intervals: [100] }).toBeGreaterThan(0.01);
+  } finally {
+    await probe.close();
+  }
 
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
   await expect(page.getByRole("status").first()).toHaveText("未连接");

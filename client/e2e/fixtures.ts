@@ -1,4 +1,4 @@
-import { test as base, expect, type APIRequestContext } from "@playwright/test";
+import { test as base, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { once } from "node:events";
@@ -74,4 +74,53 @@ export async function emit(request: APIRequestContext, data: { text: string; fin
   const response = await request.post("/__test/emit", { data });
   expect(response.status(), await response.text()).toBe(200);
   return response.json();
+}
+
+/** 同一 peer 持续收到非静音帧；最近一次采集是 WavMediaManager 当前使用的本地麦克风。 */
+export async function expectMicrophoneFlow(page: Page, request: APIRequestContext) {
+  const localTrack = () =>
+    page.evaluate(() => {
+      const track: MediaStreamTrack | undefined = (window as any).e2eMedia.tracks
+        .filter((item: MediaStreamTrack) => item.kind === "audio")
+        .at(-1);
+      return track ? { state: track.readyState, enabled: track.enabled } : null;
+    });
+  await expect.poll(localTrack).toEqual({ state: "live", enabled: true });
+  const before = await (await request.get("/__test/state")).json();
+  expect(before.peer_state).toBe("connected");
+  await expect
+    .poll(async () => {
+      const now = await (await request.get("/__test/state")).json();
+      return now.peer_id === before.peer_id ? now.non_silent_frames - before.non_silent_frames : 0;
+    })
+    .toBeGreaterThanOrEqual(5);
+  await expect.poll(localTrack).toEqual({ state: "live", enabled: true });
+}
+
+/** 直接观察远端原生音轨的 PCM，不以播放元素的 paused 状态代替有声证据。 */
+export async function botAudioProbe(page: Page) {
+  await page.locator("audio").evaluate(async (element: HTMLAudioElement) => {
+    if (!(element.srcObject instanceof MediaStream)) throw new Error("助理没有远端音轨");
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(element.srcObject);
+    const analyser = context.createAnalyser();
+    source.connect(analyser);
+    await context.resume();
+    Object.assign(window, { e2eBotAudio: { context, analyser, source } });
+  });
+  return {
+    level: () =>
+      page.evaluate(() => {
+        const analyser: AnalyserNode = (window as any).e2eBotAudio.analyser;
+        const samples = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(samples);
+        return Math.max(...samples.map(Math.abs));
+      }),
+    close: () =>
+      page.evaluate(async () => {
+        const probe = (window as any).e2eBotAudio;
+        probe.source.disconnect();
+        await probe.context.close();
+      }),
+  };
 }
