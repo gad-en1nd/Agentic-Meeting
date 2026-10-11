@@ -84,21 +84,40 @@ test("被第二页面接管及主动结束后不自动抢回连接", async ({ pa
     await observer.getByRole("button", { name: "在这台设备上继续", exact: true }).click();
     await serverReady(request, 2);
     await expect(page.getByRole("status").first()).toHaveText("未连接");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).e2eMedia.tracks.every(
+            (track: MediaStreamTrack) => track.readyState === "ended",
+          ),
+        ),
+      )
+      .toBe(true);
     await expect(observer.getByRole("status").first()).toHaveText("已连接");
     await expect(
       page.waitForRequest((req) => req.url().endsWith("/api/offer"), { timeout: 6000 }),
     ).rejects.toThrow(/Timeout/);
     const state = await (await request.get("/__test/state")).json();
     expect(state.live).toBe(id);
-    expect(state.offer_sessions).toEqual([null, id]);
+    expect(state.offer_sessions[0]).toBeNull();
+    expect(state.offer_sessions.slice(1)).toEqual(Array(state.offer_sessions.length - 1).fill(id));
     await observer.getByRole("button", { name: "结束会议", exact: true }).click();
     await expect(observer.getByRole("status").first()).toHaveText("未连接");
+    await expect
+      .poll(() =>
+        observer.evaluate(() =>
+          (window as any).e2eMedia.tracks.every(
+            (track: MediaStreamTrack) => track.readyState === "ended",
+          ),
+        ),
+      )
+      .toBe(true);
     await expect(
       observer.waitForRequest((req) => req.url().endsWith("/api/offer"), { timeout: 6000 }),
     ).rejects.toThrow(/Timeout/);
     const ended = await (await request.get("/__test/state")).json();
     expect(ended.live).toBeNull();
-    expect(ended.offer_sessions).toEqual([null, id]);
+    expect(ended.offer_sessions).toEqual(state.offer_sessions);
   } finally {
     await observer.close();
   }
@@ -157,8 +176,15 @@ for (const action of ["结束", "断线"] as const) {
       .toBe(1);
     if (action === "结束")
       await page.getByRole("button", { name: "结束会议", exact: true }).click();
-    else expect((await request.post("/__test/disconnect")).ok()).toBe(true);
-    await expect(page.getByRole("status").first()).not.toHaveText("已连接");
+    else {
+      // SDK 可在页面保持「已连接」时自愈；拒绝新 offer 才能观测真正持续的掉线。
+      expect((await request.post("/__test/offers", { data: { enabled: false } })).ok()).toBe(true);
+      expect((await request.post("/__test/disconnect")).ok()).toBe(true);
+    }
+    // 原生 ICE 检测之后还有 SDK 的 5 秒等待和三次协商退避；不是全局放宽断言。
+    await expect(page.getByRole("status").first()).not.toHaveText("已连接", {
+      timeout: action === "断线" ? 30_000 : 15_000,
+    });
     await page.evaluate(() => (window as any).e2eMedia.releaseScreen());
     await expect
       .poll(() =>

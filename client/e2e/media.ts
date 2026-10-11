@@ -5,6 +5,8 @@ export function installMedia({ nativeAudio = false } = {}) {
   let color = "#345678";
   const media = {
     tracks,
+    peers: [] as RTCPeerConnection[],
+    micRequests: [] as boolean[],
     contexts,
     /** 下一次选择窗口的结果：选中画面、用户点取消，或浏览器读不到所选画面。 */
     screenMode: "share" as "share" | "cancel" | "fail",
@@ -38,8 +40,16 @@ export function installMedia({ nativeAudio = false } = {}) {
     },
   };
   Object.assign(window, { e2eMedia: media });
+  const PeerConnection = window.RTCPeerConnection;
+  window.RTCPeerConnection = class extends PeerConnection {
+    constructor(configuration?: RTCConfiguration) {
+      super(configuration);
+      media.peers.push(this);
+    }
+  };
   const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   navigator.mediaDevices.getUserMedia = async (constraints) => {
+    media.micRequests.push(media.micDenied);
     if (media.micDenied) throw new DOMException("测试麦克风授权被拒绝", "NotAllowedError");
     if (nativeAudio) {
       const stream = await getUserMedia(constraints);

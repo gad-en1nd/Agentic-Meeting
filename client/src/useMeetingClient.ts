@@ -409,6 +409,8 @@ export function useMeetingClient(): MeetingClient {
             console.warn("取 ICE 服务器失败，不带 ICE 服务器连接：", error);
             return [];
           });
+        // SDK 只自动初始化 uninitialized；拒绝后的 error 要等下一次主动连接再重取设备。
+        if (!quiet && client.mediaState.mic.state === "error") await client.initDevices();
         await client.connect({ webrtcRequestParams: request.current });
         return true;
       } catch (error) {

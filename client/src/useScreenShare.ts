@@ -70,6 +70,9 @@ export function useScreenShare({
   sendState,
 }: Options): ScreenShare {
   const capture = useRef<Capture | null>(null);
+  const pending = useRef<object | null>(null);
+  const latestConnected = useRef(connected);
+  latestConnected.current = connected;
   const offset = useRef(0);
   const latestConfig = useRef(config);
   latestConfig.current = config;
@@ -99,6 +102,7 @@ export function useScreenShare({
   }, [connected, api]);
 
   const stop = useCallback(() => {
+    pending.current = null;
     const current = capture.current;
     if (!current) return;
     capture.current = null;
@@ -110,7 +114,7 @@ export function useScreenShare({
   }, [dispatch]);
 
   const start = useCallback(async () => {
-    if (capture.current) return;
+    if (capture.current || pending.current || !latestConnected.current) return;
     if (!navigator.mediaDevices?.getDisplayMedia) {
       dispatch({
         type: "notice",
@@ -120,17 +124,29 @@ export function useScreenShare({
       return;
     }
     let stream: MediaStream;
+    const selection = {};
+    pending.current = selection;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 2 },
         audio: false,
       });
     } catch (error) {
+      if (pending.current !== selection) return;
+      pending.current = null;
       // 用户在选择窗口里点了取消：不算出错
       if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
         const text = error instanceof Error ? error.message : "未知错误";
         dispatch({ type: "notice", level: "error", text: `无法共享屏幕：${text}` });
       }
+      return;
+    }
+
+    const active = pending.current === selection && latestConnected.current;
+    if (pending.current === selection) pending.current = null;
+    // 选择器不能由页面关闭；过期结果只能在返回时释放，不能开始另一场会议的采集。
+    if (!active) {
+      for (const track of stream.getTracks()) track.stop();
       return;
     }
 

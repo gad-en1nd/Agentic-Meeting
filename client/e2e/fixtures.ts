@@ -76,16 +76,22 @@ export async function emit(request: APIRequestContext, data: { text: string; fin
   return response.json();
 }
 
-/** 同一 peer 持续收到非静音帧；最近一次采集是 WavMediaManager 当前使用的本地麦克风。 */
+/** 同一 peer 持续收到非静音帧；检查实际 sender，避免把 SDK 临时权限探针误当当前麦克风。 */
 export async function expectMicrophoneFlow(page: Page, request: APIRequestContext) {
   const localTrack = () =>
     page.evaluate(() => {
-      const track: MediaStreamTrack | undefined = (window as any).e2eMedia.tracks
-        .filter((item: MediaStreamTrack) => item.kind === "audio")
-        .at(-1);
-      return track ? { state: track.readyState, enabled: track.enabled } : null;
+      const media = (window as any).e2eMedia;
+      const peer: RTCPeerConnection | undefined = media.peers.at(-1);
+      const track = peer?.getSenders().find((sender) => sender.track?.kind === "audio")?.track;
+      return track
+        ? {
+            state: track.readyState,
+            enabled: track.enabled,
+            captured: media.tracks.includes(track),
+          }
+        : null;
     });
-  await expect.poll(localTrack).toEqual({ state: "live", enabled: true });
+  await expect.poll(localTrack).toEqual({ state: "live", enabled: true, captured: true });
   const before = await (await request.get("/__test/state")).json();
   expect(before.peer_state).toBe("connected");
   await expect
@@ -94,7 +100,7 @@ export async function expectMicrophoneFlow(page: Page, request: APIRequestContex
       return now.peer_id === before.peer_id ? now.non_silent_frames - before.non_silent_frames : 0;
     })
     .toBeGreaterThanOrEqual(5);
-  await expect.poll(localTrack).toEqual({ state: "live", enabled: true });
+  await expect.poll(localTrack).toEqual({ state: "live", enabled: true, captured: true });
 }
 
 /** 直接观察远端原生音轨的 PCM，不以播放元素的 paused 状态代替有声证据。 */

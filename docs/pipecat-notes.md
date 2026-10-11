@@ -629,6 +629,11 @@ await client.disconnect();
   `onTrackStarted` (`localAudio.ts`) through the transport's `getAudioTransceiver()`, an internal
   method of 1.10.8 that is missing from the type declarations; it is checked before use. Without it,
   the connection keeps the ended track and the server receives no more audio.
+- **A device error needs explicit reinitialization.** In client-js 1.13.1, `needsInit()` checks
+  `mediaState.mic.state === "uninitialized"`, so a rejected permission (`"error"`) does not
+  trigger another initialization. `connectTo()` calls public `client.initDevices()` inside its
+  existing try/catch on the next explicit start or resume. A healthy microphone is left alone, and
+  the first rejected request does not trigger a second initialization in the same click.
 - Microphone constraints are not exposed by the media manager. Echo cancellation is checked in
   `onTrackStarted` with `track.getSettings().echoCancellation` and enabled with
   `track.applyConstraints({ echoCancellation: true })` when needed. Noise suppression and automatic
@@ -656,7 +661,7 @@ await client.disconnect();
 - Screenshots do not use the SDK's `enableScreenShare`, which would create a WebRTC video track. The
   page calls `navigator.mediaDevices.getDisplayMedia()`, draws the picture onto a `<canvas>` and
   uploads still images.
-- Browser test controls use APIs verified in the official **v1.12.0** source:
+- Browser test controls use APIs verified in both the official **v1.12.0** and installed source:
   [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
   exposes the real aiortc peer. Closing that peer with `await connection.pc.close()` triggers the
   transport's closed callback and worker cleanup, without sending the intentional `peerLeft` or

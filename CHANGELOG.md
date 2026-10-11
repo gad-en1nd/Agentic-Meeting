@@ -6,6 +6,13 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- Starting or resuming after microphone permission is restored retries device initialization
+  without requiring a page reload.
+- Screen sharing releases streams returned after the meeting ends or disconnects, and repeated
+  clicks while the screen picker is open no longer request another capture.
+
 ## [0.2.1] - 2026-10-11
 
 This release adds container images for the application and every inference service, and makes the

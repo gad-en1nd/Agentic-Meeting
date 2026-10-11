@@ -59,24 +59,48 @@ test("能开会的浏览器不显示兼容提示", async ({ page }) => {
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("麦克风拒绝后说明失败，恢复授权后同页能开始会议", async ({ page, request }) => {
+test("麦克风拒绝后说明失败，恢复授权后同页能开始会议", async ({ page, request }, info) => {
+  let initializations = 0;
+  page.on("console", (message) => {
+    if (message.text().includes("[Pipecat Client] Initializing devices")) initializations += 1;
+  });
   await page.goto("/");
   const start = page
     .locator("header.topbar")
     .getByRole("button", { name: "开始新会议", exact: true });
   await page.evaluate(() => ((window as any).e2eMedia.micDenied = true));
   await start.click();
-  await expect(page.locator(".notice-error")).toContainText(/麦克风不可用|连接失败/);
+  await expect(page.locator(".notice-error").filter({ hasText: "麦克风不可用" })).toContainText(
+    "测试麦克风授权被拒绝",
+  );
   await expect(start).toBeEnabled();
   expect(await (await request.get("/__test/state")).json()).toMatchObject({ ready: 0, live: null });
   expect(await page.evaluate(() => (window as any).e2eMedia.tracks.length)).toBe(0);
+  expect(initializations).toBe(1);
+  const deniedRequests = await page.evaluate(() => (window as any).e2eMedia.micRequests.slice());
   await page.evaluate(() => ((window as any).e2eMedia.micDenied = false));
   await start.click();
   await serverReady(request, 1);
   await expect(page.getByRole("status").first()).toHaveText("已连接");
   await expectMicrophoneFlow(page, request);
+  const recoveredRequests = await page.evaluate(() => (window as any).e2eMedia.micRequests.slice());
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
   await expect(page.getByRole("status").first()).toHaveText("未连接");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).e2eMedia.tracks.every(
+          (track: MediaStreamTrack) => track.readyState === "ended",
+        ),
+      ),
+    )
+    .toBe(true);
+  await info.attach("microphone-permission-recovery", {
+    body: Buffer.from(
+      JSON.stringify({ deniedRequests, recoveredRequests, initializations, released: true }),
+    ),
+    contentType: "application/json",
+  });
 });
 
 test("浏览器拦下助理声音时提示，点一下恢复播放", async ({ page, request }) => {

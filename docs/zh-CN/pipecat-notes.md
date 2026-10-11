@@ -609,7 +609,11 @@ await client.disconnect();
   纯逻辑文件因此也能直接用 Node 运行。
 - 屏幕截图不使用 SDK 的 `enableScreenShare`（它会建立一条 WebRTC 视频轨）。
   页面直接调用 `navigator.mediaDevices.getDisplayMedia()`，把画面画到 `<canvas>` 上取静态图上传。
-- 浏览器测试控制使用官方 **v1.12.0** 源码确认的 API：
+- **设备出错后要显式重新初始化。** client-js 1.13.1 的 `needsInit()` 只检查
+  `mediaState.mic.state === "uninitialized"`，授权被拒绝后的 `"error"` 不会触发重新初始化。
+  `connectTo()` 在下一次主动开始或继续时，在现有错误处理里调用公开的 `client.initDevices()`。
+  健康麦克风照常复用，首次拒绝不会在同一次点击里再次初始化。
+- 浏览器测试控制使用官方 **v1.12.0** 与已安装源码确认的 API：
   [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
   是真实 aiortc peer。`await connection.pc.close()` 触发传输关闭回调和 worker 清理，不发送主动离开的
   `peerLeft` 或 `session_closed` 消息，用于验证实际传输恢复。
