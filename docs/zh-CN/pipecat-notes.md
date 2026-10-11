@@ -602,6 +602,13 @@ await client.disconnect();
   `requestData`——SDK 自己重连（ICE 断开 5 秒后新建 PeerConnection，最多 3 次）发的 offer 就带着 `session_id`，
   服务端会继续同一场会议，而不是新建一场。
   SDK 放弃之后传输层状态变成断开，页面自己的重连（退避 1、2、4、8、8 秒）才接手。
+- **替换 peer 不能停止共用的麦克风采集源。** 锁定的 SmallWebRTC 1.10.8 在
+  `attemptReconnection(true)` 里先把 `tracks().local.audio` 交给新 peer，再通过
+  `closePeerConnection(oldPC)` 停旧 sender 的轨道。`MeetingTransport` 只在关闭不同于当前 peer 的旧连接时，
+  保留同时等于媒体管理器当前音轨、且仍被当前 peer 的 sender 使用的轨道。所有 transceiver、其它音轨和旧
+  peer 照常关闭；关闭当前 peer 仍先停所有 sender，再运行原媒体管理器的 disconnect。`pc` 和
+  `closePeerConnection` 不在类型声明里，是内部接口；升级 SDK 时必须复核这条所有权与关闭顺序。
+  原有 `onTrackStarted` 换麦克风路径保持不变。
 - **ICE 服务器设在传输层上。** `new SmallWebRTCTransport()` 不带任何 ICE 服务器，服务端 `SmallWebRTCRequestHandler`
   里的设置也传不过来。传输层有一个 `iceServers` 的 setter（`RTCIceServer[]`），每次新建 `RTCPeerConnection` 时读取，
   SDK 自己重连时也一样。页面在每次 `connect()` 之前用 `GET /api/ice` 的结果设置它（`useMeetingClient.ts`）。
@@ -609,3 +616,14 @@ await client.disconnect();
   纯逻辑文件因此也能直接用 Node 运行。
 - 屏幕截图不使用 SDK 的 `enableScreenShare`（它会建立一条 WebRTC 视频轨）。
   页面直接调用 `navigator.mediaDevices.getDisplayMedia()`，把画面画到 `<canvas>` 上取静态图上传。
+- **设备出错后要显式重新初始化。** client-js 1.13.1 的 `needsInit()` 只检查
+  `mediaState.mic.state === "uninitialized"`，授权被拒绝后的 `"error"` 不会触发重新初始化。
+  `connectTo()` 在下一次主动开始或继续时，在现有错误处理里调用公开的 `client.initDevices()`。
+  健康麦克风照常复用，首次拒绝不会在同一次点击里再次初始化。
+- 浏览器测试控制使用官方 **v1.12.0** 与已安装源码确认的 API：
+  [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
+  是真实 aiortc peer。`await connection.pc.close()` 触发传输关闭回调和 worker 清理，不发送主动离开的
+  `peerLeft` 或 `session_closed` 消息，用于验证实际传输恢复。
+  [`OutputAudioRawFrame`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/frames/frames.py)
+  携带 16 位 PCM、采样率和声道数；测试 bot 通过已有 pipeline worker 排入音频帧，经过助理的真实远端
+  WebRTC 音轨。这些受控信号不运行语音识别或合成。

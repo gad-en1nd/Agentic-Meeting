@@ -24,6 +24,15 @@ already in use by a previous run.
 **Another device cannot use the microphone or share its screen.** Browsers require HTTPS for both.
 See [Access from other devices](getting-started.md#access-from-other-devices).
 
+**Microphone permission was denied.** Restore this site's microphone permission in the browser
+and allow the browser microphone access in the operating system if it was denied there. Then click
+**开始新会议** (Start meeting) or **继续** (Resume) again on the same page; the page retries failed
+device initialization. Cancelling the screen picker leaves microphone input running.
+
+**Automatic recovery has stopped.** Once the network or server is available again, click
+**继续** (Resume) in the meeting banner to resume that meeting. If the browser says it blocked
+assistant audio, click **打开助理声音** (Enable assistant audio).
+
 **The page says 页面没能启动 (The page could not start), or that the browser lacks an interface.**
 The browser is older than the minimum or has WebRTC, microphone capture or Web Audio turned off. See
 [Supported browsers](user-guide.md#supported-browsers).

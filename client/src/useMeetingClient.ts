@@ -1,5 +1,5 @@
 import { PipecatClient } from "@pipecat-ai/client-js";
-import { SmallWebRTCTransport, WavMediaManager } from "@pipecat-ai/small-webrtc-transport";
+import { WavMediaManager, type SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import {
   useCallback,
   useEffect,
@@ -14,6 +14,7 @@ import { ApiError, createApi, type Api, type SessionDetail } from "./api.ts";
 import { authSession } from "./auth.ts";
 import { meetingUnsupportedReason } from "./browserSupport.ts";
 import { backfillAfterId, firstUtteranceId } from "./captions.ts";
+import { MeetingTransport } from "./meetingTransport.ts";
 import { sendLocalAudio } from "./localAudio.ts";
 import { describeTrackSettings } from "./micLevel.ts";
 import { PAGE_SIZE, initialState, reduce, type Action, type MeetingState } from "./meetingState.ts";
@@ -58,7 +59,7 @@ export function createMeetingClient(
   onMicTrack: (track: MediaStreamTrack | null) => void = () => undefined,
 ): PipecatClient {
   // 不用默认的 DailyMediaManager：它要从 c.daily.co 下载脚本，浏览器上不了外网就连不上（pipecat-notes.md §12）。
-  const transport = new SmallWebRTCTransport({ mediaManager: new WavMediaManager() });
+  const transport = new MeetingTransport({ mediaManager: new WavMediaManager() });
   return new PipecatClient({
     transport,
     enableMic: true,
@@ -409,6 +410,8 @@ export function useMeetingClient(): MeetingClient {
             console.warn("取 ICE 服务器失败，不带 ICE 服务器连接：", error);
             return [];
           });
+        // SDK 只自动初始化 uninitialized；拒绝后的 error 要等下一次主动连接再重取设备。
+        if (!quiet && client.mediaState.mic.state === "error") await client.initDevices();
         await client.connect({ webrtcRequestParams: request.current });
         return true;
       } catch (error) {

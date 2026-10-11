@@ -633,6 +633,11 @@ measurements are taken on connection and the one with the shortest round trip is
 
 ### 5.2 WebRTC signaling
 
+After microphone initialization fails, the next explicit start or resume retries device
+initialization, so restoring permission does not require reloading the page.
+When the SDK replaces a peer during recovery, closing the old peer preserves only the microphone
+track also used by the current peer. Ending the meeting still stops every sender track.
+
 | Method and path    | Description                                                                                                             |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `POST /api/offer`  | Request and response are defined by Pipecat's `SmallWebRTCRequestHandler` and passed through                            |
@@ -667,6 +672,10 @@ empty list (the default) means host candidates only.
 `GET /` returns a 503 page with build instructions when `client/dist` does not exist.
 
 ### 5.3 Screenshots
+
+The browser opens at most one screen picker while connected. Ending the meeting, disconnecting
+or unmounting the page invalidates a pending picker; if it later returns a stream, all its tracks
+are stopped without starting capture or uploading a screenshot.
 
 `POST /api/frames`, `multipart/form-data`:
 

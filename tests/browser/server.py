@@ -7,19 +7,23 @@ import socket
 import tempfile
 import time
 import tomllib
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from PIL import Image
-from pipecat.frames.frames import Frame, InputAudioRawFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 from pipecat.transports.base_transport import TransportParams
+from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 from starlette.routing import Mount
@@ -103,11 +107,15 @@ class AudioProbe(FrameProcessor):
         super().__init__()
         self.elapsed_secs = base_secs
         self.audio_frames = 0
+        self.non_silent_frames = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, InputAudioRawFrame):
             self.audio_frames += 1
+            samples = np.frombuffer(frame.audio, dtype="<i2").astype(np.float64)
+            if len(samples) and np.sqrt(np.mean(samples**2)) >= 300:
+                self.non_silent_frames += 1
             self.elapsed_secs += len(frame.audio) / (2 * frame.num_channels * frame.sample_rate)
         await self.push_frame(frame, direction)
 
@@ -122,13 +130,19 @@ class ControlledBot:
         self.ready = 0
         self.segment = 0
         self.probe: AudioProbe | None = None
+        self.connection: SmallWebRTCConnection | None = None
+        self.offers_enabled = True
+        self.offer_sessions: list[str | None] = []
 
-    async def __call__(self, connection: Any, request: Any, resources: AppResources) -> None:
+    async def __call__(
+        self, connection: SmallWebRTCConnection, request: Any, resources: AppResources
+    ) -> None:
         manager = resources.sessions
         assert manager is not None
         wanted = request.get("session_id") if isinstance(request, dict) else None
         live = await manager.attach(wanted) if wanted else await manager.begin()
         self.segment = live.connection_id * 1000 + 1
+        self.connection = connection
         try:
             transport = SmallWebRTCTransport(
                 webrtc_connection=connection,
@@ -160,12 +174,30 @@ class ControlledBot:
             await runner.run()
         finally:
             await manager.finish(live)
+            if self.connection is connection:
+                self.connection = None
 
 
 def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
     bot = ControlledBot()
     app = create_app(cfg, store=store, bot=bot)
     control = FastAPI()
+
+    @app.middleware("http")
+    async def offers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        if request.method == "POST" and request.url.path == "/api/offer":
+            try:
+                body = await request.json()
+            except ValueError:
+                return await call_next(request)
+            data = body.get("requestData", {}) if isinstance(body, dict) else {}
+            wanted = data.get("session_id") if isinstance(data, dict) else None
+            bot.offer_sessions.append(wanted if isinstance(wanted, str) else None)
+            if not bot.offers_enabled:
+                return JSONResponse({"detail": "测试协商暂不可用"}, status_code=503)
+        return await call_next(request)
 
     @control.get("/state")
     async def state() -> dict[str, Any]:
@@ -175,7 +207,37 @@ def application(cfg: AppConfig, store: Store, seeds: dict[str, Any]) -> FastAPI:
             "live": live.session.id if live else None,
             "ready": bot.ready,
             "audio_frames": bot.probe.audio_frames if bot.probe else 0,
+            "non_silent_frames": bot.probe.non_silent_frames if bot.probe else 0,
+            "peer_id": bot.connection.pc_id if bot.connection else None,
+            "peer_state": bot.connection.pc.connectionState if bot.connection else None,
+            "offer_sessions": bot.offer_sessions,
         }
+
+    @control.post("/offers")
+    async def set_offers(enabled: bool = Body(embed=True)) -> dict[str, bool]:
+        bot.offers_enabled = enabled
+        return {"enabled": enabled}
+
+    @control.post("/disconnect")
+    async def disconnect() -> dict[str, str]:
+        connection = bot.connection
+        live = app.state.resources.sessions.live
+        if connection is None or live is None:
+            raise HTTPException(409, "没有活动测试连接")
+        # 关闭真实 peer，不发送 session_closed 或 peerLeft，模拟意外传输中断。
+        await asyncio.wait_for(connection.pc.close(), timeout=5)
+        await asyncio.wait_for(live.finished.wait(), timeout=15)
+        return {"peer_id": connection.pc_id, "state": connection.pc.connectionState}
+
+    @control.post("/tone")
+    async def tone() -> dict[str, int]:
+        live = app.state.resources.sessions.live
+        if live is None or live.worker is None or bot.connection is None:
+            raise HTTPException(409, "没有活动测试连接")
+        t = np.arange(24000) / 24000
+        pcm = (np.sin(2 * np.pi * 440 * t) * 1600).astype("<i2").tobytes()
+        await live.worker.queue_frame(OutputAudioRawFrame(pcm, 24000, 1))
+        return {"samples": 24000, "sample_rate": 24000}
 
     @control.post("/emit")
     async def emit(body: dict[str, Any]) -> dict[str, Any]:

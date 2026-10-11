@@ -629,6 +629,11 @@ await client.disconnect();
   `onTrackStarted` (`localAudio.ts`) through the transport's `getAudioTransceiver()`, an internal
   method of 1.10.8 that is missing from the type declarations; it is checked before use. Without it,
   the connection keeps the ended track and the server receives no more audio.
+- **A device error needs explicit reinitialization.** In client-js 1.13.1, `needsInit()` checks
+  `mediaState.mic.state === "uninitialized"`, so a rejected permission (`"error"`) does not
+  trigger another initialization. `connectTo()` calls public `client.initDevices()` inside its
+  existing try/catch on the next explicit start or resume. A healthy microphone is left alone, and
+  the first rejected request does not trigger a second initialization in the same click.
 - Microphone constraints are not exposed by the media manager. Echo cancellation is checked in
   `onTrackStarted` with `track.getSettings().echoCancellation` and enabled with
   `track.applyConstraints({ echoCancellation: true })` when needed. Noise suppression and automatic
@@ -646,6 +651,14 @@ await client.disconnect();
   known, so an SDK-initiated reconnect (a new PeerConnection five seconds after ICE disconnects, up
   to three times) resumes the same meeting. When the SDK gives up, the page's own reconnection with
   backoff of 1, 2, 4, 8, 8 s takes over.
+- **Replacing a peer must not stop its shared microphone source.** In locked SmallWebRTC 1.10.8,
+  `attemptReconnection(true)` attaches `tracks().local.audio` to the new peer, then
+  `closePeerConnection(oldPC)` stops old sender tracks. `MeetingTransport` preserves only a track
+  identical to the media manager's current audio and a current-peer sender, when closing a different
+  peer. All transceivers, other tracks and the old peer still close; closing the current peer stops
+  every sender before the original media-manager disconnect. `pc` and `closePeerConnection` are
+  internal methods absent from the declarations: recheck this ownership and shutdown order on SDK
+  upgrades. The existing `onTrackStarted` device-change path stays in place.
 - **ICE servers are set on the transport.** `new SmallWebRTCTransport()` uses no ICE servers, and
   nothing from the server's `SmallWebRTCRequestHandler` reaches it. The transport has an
   `iceServers` setter (`RTCIceServer[]`) that is read each time it creates an `RTCPeerConnection`,
@@ -656,3 +669,12 @@ await client.disconnect();
 - Screenshots do not use the SDK's `enableScreenShare`, which would create a WebRTC video track. The
   page calls `navigator.mediaDevices.getDisplayMedia()`, draws the picture onto a `<canvas>` and
   uploads still images.
+- Browser test controls use APIs verified in both the official **v1.12.0** and installed source:
+  [`SmallWebRTCConnection.pc`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/transports/smallwebrtc/connection.py)
+  exposes the real aiortc peer. Closing that peer with `await connection.pc.close()` triggers the
+  transport's closed callback and worker cleanup, without sending the intentional `peerLeft` or
+  `session_closed` messages. This exercises transport recovery rather than changing page state.
+  [`OutputAudioRawFrame`](https://github.com/pipecat-ai/pipecat/blob/v1.12.0/src/pipecat/frames/frames.py)
+  carries 16-bit PCM, sample rate and channel count; the test bot queues it through the existing
+  pipeline worker to exercise the assistant's real remote WebRTC audio track. These controlled
+  signals do not exercise speech recognition or synthesis.
