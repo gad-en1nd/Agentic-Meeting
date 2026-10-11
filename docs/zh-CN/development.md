@@ -196,6 +196,12 @@ Chromium 与 WebKit 使用 CPU WebAudio 麦克风轨道，Firefox 使用浏览�
 这些检查不验证真实麦克风或屏幕授权、物理设备、模型效果、外部服务、GPU 行为或互联网 ICE 连通性。
 CI 在 Ubuntu CPU 上运行三个引擎；其他系统的平台相关浏览器启动或 ICE 故障需要定位，不能通过跳过引擎绕过。
 
+`mediaRecovery.spec.ts` 还通过关闭真实服务端 peer 验证自动恢复、同会话 offer、有限重试与手动继续、
+接管与结束、等待中的屏幕选择清理、局部画面变化及默认 60 秒心跳。麦克风断言观察实际当前 peer 的音频
+sender，不取最后一次采集的轨道（SDK 权限探针会取得临时轨道）。服务端将 RMS 不低于 300 的 16 位 PCM
+帧计为非静音；包计数本身不证明有效输入。自动播放恢复测试同时观察远端 PCM 和播放元素，实际可听仍需
+原生检查。已完成的验证与剩余限制见[浏览器矩阵](user-guide.md#支持的浏览器)。
+
 原生桌面检查可在仓库根目录运行 `uv run python -m tests.browser.server`，然后在安装版浏览器打开
 `E2E_READY` 后的 URL。这不运行 Playwright 夹具，也不替换 `getUserMedia` / `getDisplayMedia`。
 回环测试服务提供以下控制：

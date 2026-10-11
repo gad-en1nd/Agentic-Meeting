@@ -228,6 +228,15 @@ screen permissions, physical devices, model quality, external services, GPU beha
 ICE connectivity. CI runs the three engines on Ubuntu CPU; platform-specific browser startup or
 ICE failures on other operating systems must be investigated rather than skipping an engine.
 
+`mediaRecovery.spec.ts` also closes the real server peer to test automatic recovery, same-session
+offers, bounded retries and manual resume, takeover and termination, pending screen-picker cleanup,
+local picture changes and the default 60-second heartbeat. Microphone assertions inspect the actual
+current peer's audio sender, not the last acquired track (SDK permission probes acquire temporary
+tracks). The server counts received 16-bit PCM frames with RMS at least 300 as non-silent; packet
+counts alone do not establish useful input. The autoplay recovery test observes remote PCM as well
+as the playback element; actual audibility still requires a native check. See the
+[browser matrix](user-guide.md#supported-browsers) for completed validation and remaining limits.
+
 For native desktop checks, run `uv run python -m tests.browser.server` at the repository root
 and open the URL printed after `E2E_READY` in an installed browser. This does not run the
 Playwright fixture or replace `getUserMedia` / `getDisplayMedia`. The loopback test server exposes:
