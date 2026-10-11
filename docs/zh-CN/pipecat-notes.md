@@ -602,6 +602,13 @@ await client.disconnect();
   `requestData`——SDK 自己重连（ICE 断开 5 秒后新建 PeerConnection，最多 3 次）发的 offer 就带着 `session_id`，
   服务端会继续同一场会议，而不是新建一场。
   SDK 放弃之后传输层状态变成断开，页面自己的重连（退避 1、2、4、8、8 秒）才接手。
+- **替换 peer 不能停止共用的麦克风采集源。** 锁定的 SmallWebRTC 1.10.8 在
+  `attemptReconnection(true)` 里先把 `tracks().local.audio` 交给新 peer，再通过
+  `closePeerConnection(oldPC)` 停旧 sender 的轨道。`MeetingTransport` 只在关闭不同于当前 peer 的旧连接时，
+  保留同时等于媒体管理器当前音轨、且仍被当前 peer 的 sender 使用的轨道。所有 transceiver、其它音轨和旧
+  peer 照常关闭；关闭当前 peer 仍先停所有 sender，再运行原媒体管理器的 disconnect。`pc` 和
+  `closePeerConnection` 不在类型声明里，是内部接口；升级 SDK 时必须复核这条所有权与关闭顺序。
+  原有 `onTrackStarted` 换麦克风路径保持不变。
 - **ICE 服务器设在传输层上。** `new SmallWebRTCTransport()` 不带任何 ICE 服务器，服务端 `SmallWebRTCRequestHandler`
   里的设置也传不过来。传输层有一个 `iceServers` 的 setter（`RTCIceServer[]`），每次新建 `RTCPeerConnection` 时读取，
   SDK 自己重连时也一样。页面在每次 `connect()` 之前用 `GET /api/ice` 的结果设置它（`useMeetingClient.ts`）。

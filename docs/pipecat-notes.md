@@ -651,6 +651,14 @@ await client.disconnect();
   known, so an SDK-initiated reconnect (a new PeerConnection five seconds after ICE disconnects, up
   to three times) resumes the same meeting. When the SDK gives up, the page's own reconnection with
   backoff of 1, 2, 4, 8, 8 s takes over.
+- **Replacing a peer must not stop its shared microphone source.** In locked SmallWebRTC 1.10.8,
+  `attemptReconnection(true)` attaches `tracks().local.audio` to the new peer, then
+  `closePeerConnection(oldPC)` stops old sender tracks. `MeetingTransport` preserves only a track
+  identical to the media manager's current audio and a current-peer sender, when closing a different
+  peer. All transceivers, other tracks and the old peer still close; closing the current peer stops
+  every sender before the original media-manager disconnect. `pc` and `closePeerConnection` are
+  internal methods absent from the declarations: recheck this ownership and shutdown order on SDK
+  upgrades. The existing `onTrackStarted` device-change path stays in place.
 - **ICE servers are set on the transport.** `new SmallWebRTCTransport()` uses no ICE servers, and
   nothing from the server's `SmallWebRTCRequestHandler` reaches it. The transport has an
   `iceServers` setter (`RTCIceServer[]`) that is read each time it creates an `RTCPeerConnection`,

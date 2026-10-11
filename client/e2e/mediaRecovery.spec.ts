@@ -42,6 +42,15 @@ test("意外关闭真实 peer 后自动继续同一会议、保留字幕截图�
   expect(detail.connections[0].disconnected_at).not.toBeNull();
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
   await expect(page.getByRole("status").first()).toHaveText("未连接");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).e2eMedia.tracks.every(
+          (track: MediaStreamTrack) => track.readyState === "ended",
+        ),
+      ),
+    )
+    .toBe(true);
 });
 
 test("SDK与页面重试耗尽后停止协商，恢复服务可手动继续同一会议", async ({ page, request }) => {

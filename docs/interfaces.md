@@ -635,6 +635,8 @@ measurements are taken on connection and the one with the shortest round trip is
 
 After microphone initialization fails, the next explicit start or resume retries device
 initialization, so restoring permission does not require reloading the page.
+When the SDK replaces a peer during recovery, closing the old peer preserves only the microphone
+track also used by the current peer. Ending the meeting still stops every sender track.
 
 | Method and path    | Description                                                                                                             |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
