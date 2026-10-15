@@ -10,6 +10,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Sharing regression fixtures start expiry after payload preparation and explicitly close injected-failure connections before recovery.
+
 - Closing meeting shares discards late UI results, so reopening cannot restore a one-time link.
 
 - Ordered meeting streams enforce login and meeting access during snapshot, replay and blocked
