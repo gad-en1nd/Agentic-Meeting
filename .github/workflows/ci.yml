@@ -100,6 +100,7 @@ jobs:
     env:
       # Overrides .python-version, which pins the default development version.
       UV_PYTHON: ${{ matrix.python }}
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v7
 
