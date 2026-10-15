@@ -334,18 +334,30 @@ export function useMeetingClient(): MeetingClient {
         if (detail.state === "ended" || latest.current.connection !== "disconnected") {
           void api
             .listFrames(detail.id)
-            .then((frames) =>
-              dispatch({ type: "framesLoaded", sessionId: detail.id, items: frames, merge: false }),
-            )
+            .then((frames) => {
+              if (requestId === viewRequest.current)
+                dispatch({
+                  type: "framesLoaded",
+                  sessionId: detail.id,
+                  items: frames,
+                  merge: false,
+                });
+            })
             .catch(() => undefined);
           void api
             .listTasks(detail.id)
-            .then((tasks) => dispatch({ type: "tasksLoaded", sessionId: detail.id, items: tasks }))
+            .then((tasks) => {
+              if (requestId === viewRequest.current)
+                dispatch({ type: "tasksLoaded", sessionId: detail.id, items: tasks });
+            })
             .catch(() => undefined);
         }
         void api
           .getReport(detail.id)
-          .then((report) => dispatch({ type: "reportLoaded", sessionId: detail.id, report }))
+          .then((report) => {
+            if (requestId === viewRequest.current)
+              dispatch({ type: "reportLoaded", sessionId: detail.id, report });
+          })
           .catch(() => undefined);
       } catch (error) {
         if (requestId !== viewRequest.current) return;
@@ -548,23 +560,38 @@ export function useMeetingClient(): MeetingClient {
   // 唯一旁听事件通道：完整快照、按游标重放和共享消息 reducer（interfaces.md §5.1）。
   const watchingId = watchingSessionId(state);
   const refreshWatched = useCallback(
-    (id: string) => {
+    (id: string, close: () => void) => {
+      const requestId = viewRequest.current;
+      const stillWatching = () =>
+        requestId === viewRequest.current && latest.current.viewing?.id === id;
       void api
         .getSession(id)
         .then((detail) => {
           if (
-            latest.current.viewing?.id === id &&
-            (detail.deletion_pending || detail.state === latest.current.viewing.state)
+            stillWatching() &&
+            (detail.deletion_pending || detail.state === latest.current.viewing?.state)
           )
             dispatch({ type: "detailRefreshed", detail });
         })
         .catch((error: unknown) => {
-          if (error instanceof ApiError && error.status === 404)
+          if (!stillWatching()) return;
+          if (error instanceof ApiError && error.status === 404) {
+            close();
+            const cleared = ++viewRequest.current;
+            dispatch({ type: "viewRequested", requestId: cleared });
+            dispatch({
+              type: "viewLoaded",
+              requestId: cleared,
+              detail: null,
+              items: [],
+              speakers: [],
+            });
             dispatch({ type: "sessionRemoved", id });
-          else fail("loadSession", error);
+            void refreshSessions();
+          } else fail("loadSession", error);
         });
     },
-    [api, fail],
+    [api, fail, refreshSessions],
   );
   useEffect(() => {
     if (watchingId === null) return;
@@ -572,8 +599,18 @@ export function useMeetingClient(): MeetingClient {
     let epoch: string | null = null;
     let seq = -1;
     let disposed = false;
+    const requestId = viewRequest.current;
     let detailAt = 0;
-    const current = () => !disposed && watchingSessionId(latest.current) === watchingId;
+    const close = () => {
+      disposed = true;
+      epoch = null;
+      seq = -1;
+      events.close();
+    };
+    const current = () =>
+      !disposed &&
+      requestId === viewRequest.current &&
+      watchingSessionId(latest.current) === watchingId;
     events.onopen = () => {
       if (current()) dispatch({ type: "watcherDisconnected", disconnected: false });
     };
@@ -601,7 +638,7 @@ export function useMeetingClient(): MeetingClient {
       seq = event.seq;
       const data = event.data;
       if (data.type === "session_deleted") {
-        events.close();
+        close();
         dispatch({ type: "sessionRemoved", id: watchingId });
         return;
       }
@@ -610,7 +647,7 @@ export function useMeetingClient(): MeetingClient {
         (data.state === "live" || data.state === "interrupted" || data.state === "ended")
       ) {
         dispatch({ type: "watchedState", sessionId: watchingId, state: data.state });
-        refreshWatched(watchingId);
+        refreshWatched(watchingId, close);
         return;
       }
       if (
@@ -631,20 +668,20 @@ export function useMeetingClient(): MeetingClient {
       dispatchServerMessage(dispatch, message);
       if (message.type === "utterance" && Date.now() - detailAt > WATCH_DETAIL_MS) {
         detailAt = Date.now();
-        refreshWatched(watchingId);
+        refreshWatched(watchingId, close);
       }
     });
     events.onerror = () => {
       if (!current()) return;
       dispatch({ type: "watcherDisconnected", disconnected: true });
-      if (events.readyState === EventSource.CLOSED) refreshWatched(watchingId);
+      // 主动撤权和自然续流均会触发 error；立即确认授权，不等浏览器下一轮重连。
+      refreshWatched(watchingId, close);
     };
     return () => {
-      disposed = true;
-      events.close();
+      close();
       dispatch({ type: "watcherDisconnected", disconnected: false });
     };
-  }, [watchingId, refreshWatched, api]);
+  }, [watchingId, state.viewRequest, refreshWatched, api]);
 
   const stop = useCallback(async () => {
     inMeeting.current = false;
@@ -672,11 +709,13 @@ export function useMeetingClient(): MeetingClient {
   );
 
   const loadOlder = useCallback(async () => {
+    const requestId = viewRequest.current;
     const viewing = latest.current.viewing;
     const before = firstUtteranceId(latest.current.captions);
     if (!viewing || before === null) return;
     try {
       const items = await api.listUtterances(viewing.id, { beforeId: before, limit: PAGE_SIZE });
+      if (requestId !== viewRequest.current) return;
       dispatch({ type: "olderLoaded", items });
     } catch (error) {
       fail("loadOlder", error);
@@ -882,6 +921,7 @@ export function useMeetingClient(): MeetingClient {
   );
   const screenShare = useScreenShare({
     api,
+    sessionId: state.liveSessionId,
     connected: state.connection === "connected",
     config: state.screen,
     dispatch,

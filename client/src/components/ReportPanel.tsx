@@ -61,7 +61,7 @@ export function ReportPanel({
   const generate = (
     <Button
       variant={report === null ? "default" : "outline"}
-      disabled={blocker !== null}
+      disabled={blocker !== null || session?.access?.role === "watcher"}
       title={blocker ?? undefined}
       onClick={onGenerate}
     >
