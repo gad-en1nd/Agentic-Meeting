@@ -6,7 +6,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add meeting passwords and expiring watcher links with exact-login leases, guest access, and prompt revocation of streams and downloads.
+
 ### Fixed
+
+- Closing meeting shares discards late UI results, so reopening cannot restore a one-time link.
 
 - Ordered meeting streams enforce login and meeting access during snapshot, replay and blocked
   sends. Revoked views discard old materials and pending responses while other meetings continue.
