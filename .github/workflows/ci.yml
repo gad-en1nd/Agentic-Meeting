@@ -91,6 +91,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +122,7 @@ jobs:
         run: uv run ruff format --check src tests scripts
 
       - name: Test
-        run: uv run pytest
+        run: uv run pytest -vv -o faulthandler_timeout=90
 
   client:
     name: Web client
